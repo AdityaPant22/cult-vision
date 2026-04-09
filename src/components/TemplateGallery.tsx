@@ -26,6 +26,8 @@ export function TemplateGallery({
 }: TemplateGalleryProps) {
   const templates = getVideoTemplates();
   const hasRepTiming = (recording.templateRepCount ?? 0) > 0;
+  const isPrimaryFamilyTemplate = (templateId: VideoTemplateId) =>
+    templateId === "primary" || templateId === "primary-dhurandhar";
   const renderedVersionMap = new Map(
     recording.editedVersions.map((version) => [version.templateId, version])
   );
@@ -147,6 +149,16 @@ export function TemplateGallery({
               </div>
             ) : null}
 
+            {isPrimaryFamilyTemplate(template.id) ? (
+              <div className="template-note">
+                <strong>Primary renders as a pair</strong>
+                <p className="subtle-copy">
+                  Starting either Primary card will queue both soundtrack cuts so you can compare
+                  them side by side.
+                </p>
+              </div>
+            ) : null}
+
             {!renderedVersion && hasFailed ? (
               <div className="template-progress-card failed">
                 <div className="panel-header">
@@ -180,7 +192,7 @@ export function TemplateGallery({
                 type="button"
                 onClick={() => onStartRender(template.id)}
               >
-                Start Render
+                {isPrimaryFamilyTemplate(template.id) ? "Render Both Cuts" : "Start Render"}
               </button>
             ) : (
               <div className="template-status-inline">

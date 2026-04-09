@@ -1,5 +1,7 @@
 import { RecordingRepEvent, VideoTemplateId } from "../types";
 import primaryTemplateTrackUrl from "../assets/primary-template-track.mp3";
+import primaryTemplateTrackDhurandharUrl from "../assets/primary-template-track-dhurandhar.mp3";
+import cultLogoUrl from "../assets/cult-logo.jpeg";
 
 export interface VideoTemplateDefinition {
   id: VideoTemplateId;
@@ -39,14 +41,37 @@ declare global {
   }
 }
 
+const PRIMARY_TEMPLATE_IDS = ["primary", "primary-dhurandhar"] as const;
+
+function isPrimaryTemplateId(templateId: VideoTemplateId): templateId is (typeof PRIMARY_TEMPLATE_IDS)[number] {
+  return PRIMARY_TEMPLATE_IDS.includes(templateId as (typeof PRIMARY_TEMPLATE_IDS)[number]);
+}
+
+function getPrimaryTrackSourceUrl(templateId: VideoTemplateId): string {
+  return templateId === "primary-dhurandhar"
+    ? primaryTemplateTrackDhurandharUrl
+    : primaryTemplateTrackUrl;
+}
+
+const loadCultLogoImage = createImageLoader(cultLogoUrl);
+
 const TEMPLATE_DEFINITIONS: VideoTemplateDefinition[] = [
   {
     id: "primary",
-    name: "Primary",
+    name: "Primary / Track 1",
     shortLabel: "Auto-trim hero cut",
     description:
       "Trims to the working set, gives the final rep a slow-motion hero beat, and lays in a music bed with a premium vertical story layout.",
-    effects: ["Auto cull", "Last rep slow-mo", "Music bed", "Hero layout"],
+    effects: ["Auto cull", "Last rep slow-mo", "Track 1", "Hero layout"],
+    requiresRepTiming: true
+  },
+  {
+    id: "primary-dhurandhar",
+    name: "Primary / Dhurandhar",
+    shortLabel: "Auto-trim hero cut",
+    description:
+      "The same Primary hero cut, now rendered against the Dhurandhar soundtrack so you can choose the stronger music match.",
+    effects: ["Auto cull", "Last rep slow-mo", "Dhurandhar track", "Hero layout"],
     requiresRepTiming: true
   },
   {
@@ -130,6 +155,24 @@ function createAudioBufferLoader(audioContext: AudioContext, sourceUrl: string) 
   };
 }
 
+function createImageLoader(sourceUrl: string) {
+  let cachedPromise: Promise<HTMLImageElement> | null = null;
+
+  return async () => {
+    if (!cachedPromise) {
+      cachedPromise = new Promise((resolve, reject) => {
+        const image = new Image();
+        image.decoding = "async";
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Could not load the image for this template."));
+        image.src = sourceUrl;
+      });
+    }
+
+    return cachedPromise;
+  };
+}
+
 function waitForEvent(
   target: HTMLMediaElement,
   eventName: "loadedmetadata" | "ended"
@@ -193,6 +236,38 @@ function clamp(value: number, min: number, max: number): number {
 
 function lerp(start: number, end: number, amount: number): number {
   return start + (end - start) * amount;
+}
+
+function easeOutCubic(value: number): number {
+  const t = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutQuad(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function getRampEnvelope(
+  timeSec: number,
+  startSec: number,
+  peakStartSec: number,
+  peakEndSec: number,
+  endSec: number
+): number {
+  if (timeSec <= startSec || timeSec >= endSec) {
+    return 0;
+  }
+
+  if (timeSec < peakStartSec) {
+    return easeOutCubic((timeSec - startSec) / Math.max(0.001, peakStartSec - startSec));
+  }
+
+  if (timeSec <= peakEndSec) {
+    return 1;
+  }
+
+  return 1 - easeInOutQuad((timeSec - peakEndSec) / Math.max(0.001, endSec - peakEndSec));
 }
 
 function getTemplateDefinition(templateId: VideoTemplateId): VideoTemplateDefinition {
@@ -667,9 +742,109 @@ function drawMetricChip(params: {
   context.stroke();
 
   context.fillStyle = status === "ok" ? "#49dc85" : "#e0c26e";
-  context.font = "700 14px 'Avenir Next', 'Segoe UI', sans-serif";
   const prefix = status === "ok" ? "✓" : "•";
-  context.fillText(`${prefix} ${label.toUpperCase()}`, x + 14, y + 25);
+  const chipText = `${prefix} ${label.toUpperCase()}`;
+  let fontSize = 14;
+  let measuredWidth = Number.POSITIVE_INFINITY;
+
+  while (fontSize >= 11) {
+    context.font = `700 ${fontSize}px 'Avenir Next', 'Segoe UI', sans-serif`;
+    measuredWidth = context.measureText(chipText).width;
+    if (measuredWidth <= width - 22) {
+      break;
+    }
+    fontSize -= 1;
+  }
+
+  context.textAlign = "center";
+  context.fillText(chipText, x + width / 2, y + 25);
+  context.textAlign = "left";
+}
+
+function drawPrimaryLogoBadge(params: {
+  context: CanvasRenderingContext2D;
+  logoImage: CanvasImageSource | null;
+}) {
+  const { context, logoImage } = params;
+  const badgeX = 20;
+  const badgeY = 14;
+  const badgeSize = 54;
+
+  drawRoundedRect(context, badgeX, badgeY, badgeSize, badgeSize, 18);
+  context.fillStyle = "rgba(8, 10, 12, 0.9)";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  if (!logoImage) {
+    return;
+  }
+
+  context.save();
+  drawRoundedRect(context, badgeX, badgeY, badgeSize, badgeSize, 18);
+  context.clip();
+  context.drawImage(logoImage, badgeX + 3, badgeY + 3, badgeSize - 6, badgeSize - 6);
+  context.restore();
+}
+
+function drawPrimaryRepCounter(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  completedRepCount: number;
+  pulseStrength: number;
+}) {
+  const { context, canvasWidth, completedRepCount, pulseStrength } = params;
+  const x = canvasWidth - 144;
+  const y = 18;
+  const width = 124;
+  const height = 42;
+  const emojiScale = 1 + pulseStrength * 0.28;
+  const repText = `${completedRepCount} reps`;
+
+  drawRoundedRect(context, x, y, width, height, 20);
+  context.fillStyle = "rgba(12, 15, 19, 0.82)";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  if (pulseStrength > 0.01) {
+    context.save();
+    context.globalAlpha = 0.18 + pulseStrength * 0.18;
+    context.fillStyle = "#ff8a3d";
+    context.beginPath();
+    context.arc(x + width * 0.66, y + 21, 13 + pulseStrength * 10, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  const repFont = "700 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  const emojiFont = "700 14px 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
+  const emojiGap = 6;
+
+  context.fillStyle = "#f4f4ef";
+  context.font = repFont;
+  const repTextWidth = context.measureText(repText).width;
+  context.font = emojiFont;
+  const emojiWidth = context.measureText("🔥").width;
+  const totalContentWidth = repTextWidth + emojiGap + emojiWidth;
+  const contentStartX = x + width / 2 - totalContentWidth / 2;
+  const baselineY = y + 26;
+
+  context.font = repFont;
+  context.textAlign = "left";
+  context.fillText(repText, contentStartX, baselineY);
+
+  context.save();
+  context.translate(contentStartX + repTextWidth + emojiGap + emojiWidth / 2, y + 24);
+  context.scale(emojiScale, emojiScale);
+  context.font = emojiFont;
+  context.textAlign = "center";
+  context.fillText("🔥", 0, 0);
+  context.restore();
+
+  context.textAlign = "left";
 }
 
 function drawPrimaryOverlay(params: {
@@ -679,24 +854,27 @@ function drawPrimaryOverlay(params: {
   completedRepCount: number;
   titleText: string;
   subjectName: string;
+  logoImage: CanvasImageSource | null;
+  repPulseStrength: number;
 }) {
-  const { context, canvasWidth, canvasHeight, completedRepCount, titleText, subjectName } = params;
-  drawStatusPill({
+  const {
     context,
-    x: 20,
-    y: 18,
-    width: 146,
-    label: "CULT PRIMARY",
-    accent: "#ef4d65"
+    canvasWidth,
+    canvasHeight,
+    completedRepCount,
+    titleText,
+    logoImage,
+    repPulseStrength
+  } = params;
+  drawPrimaryLogoBadge({
+    context,
+    logoImage
   });
-  drawStatusPill({
+  drawPrimaryRepCounter({
     context,
-    x: canvasWidth - 144,
-    y: 18,
-    width: 124,
-    label: `${completedRepCount} reps 🔥`,
-    accent: "#f4f4ef",
-    align: "right"
+    canvasWidth,
+    completedRepCount,
+    pulseStrength: repPulseStrength
   });
 
   const wash = context.createLinearGradient(0, canvasHeight * 0.54, 0, canvasHeight);
@@ -707,15 +885,15 @@ function drawPrimaryOverlay(params: {
   context.fillRect(0, canvasHeight * 0.52, canvasWidth, canvasHeight * 0.48);
 
   const chipY = canvasHeight * 0.69;
-  const chipWidth = Math.min(148, canvasWidth * 0.28);
   const chipGap = 10;
   const chipStartX = 20;
+  const chipWidth = Math.floor((canvasWidth - chipStartX * 2 - chipGap * 2) / 3);
   drawMetricChip({
     context,
     x: chipStartX,
     y: chipY,
     width: chipWidth,
-    label: "Auto Trim",
+    label: "Clean Depth",
     status: "ok"
   });
   drawMetricChip({
@@ -723,7 +901,7 @@ function drawPrimaryOverlay(params: {
     x: chipStartX + chipWidth + chipGap,
     y: chipY,
     width: chipWidth,
-    label: "Last Rep Slow",
+    label: "Strong Drive",
     status: "ok"
   });
   drawMetricChip({
@@ -731,7 +909,7 @@ function drawPrimaryOverlay(params: {
     x: chipStartX + (chipWidth + chipGap) * 2,
     y: chipY,
     width: chipWidth,
-    label: "Track On",
+    label: "Confident Finish",
     status: "ok"
   });
 
@@ -747,17 +925,15 @@ function drawPrimaryOverlay(params: {
   context.fillStyle = "rgba(244, 244, 239, 0.78)";
   context.font = "600 14px 'Avenir Next', 'Segoe UI', sans-serif";
   context.fillText(
-    `${subjectName} in a clean working-set cut. Final rep slows down before the lockout.`,
+    "A strong squat set with clean depth, steady control, and a finish worth sharing.",
     24,
-    panelY + 86
+    panelY + 86,
+    canvasWidth - 48
   );
 
   context.fillStyle = "rgba(244, 244, 239, 0.32)";
   context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
-  context.fillText("Strength Bay • Today", 24, canvasHeight - 18);
-  context.textAlign = "right";
-  context.fillText("@cultvision", canvasWidth - 24, canvasHeight - 18);
-  context.textAlign = "left";
+  context.fillText("📍 Curefit (HQ) • 10th April", 24, panelY + 118);
 }
 
 function drawCultEidosOverlay(params: {
@@ -1012,6 +1188,8 @@ function drawFrameForTemplate(params: {
   completedRepCount: number;
   titleText: string;
   subjectName: string;
+  primaryLogoImage: CanvasImageSource | null;
+  primaryRepPulseStrength: number;
 }) {
   const crop = drawBaseVideoFrame(params);
 
@@ -1050,7 +1228,7 @@ function drawFrameForTemplate(params: {
     return;
   }
 
-  if (params.templateId === "primary") {
+  if (isPrimaryTemplateId(params.templateId)) {
     const cleanWash = params.context.createLinearGradient(0, 0, 0, params.canvasHeight);
     cleanWash.addColorStop(0, "rgba(210, 255, 114, 0.08)");
     cleanWash.addColorStop(0.52, "rgba(8, 10, 12, 0.08)");
@@ -1069,7 +1247,9 @@ function drawFrameForTemplate(params: {
       canvasHeight: params.canvasHeight,
       completedRepCount: params.completedRepCount,
       titleText: params.titleText,
-      subjectName: params.subjectName
+      subjectName: params.subjectName,
+      logoImage: params.primaryLogoImage,
+      repPulseStrength: params.primaryRepPulseStrength
     });
     return;
   }
@@ -1268,6 +1448,7 @@ function buildRepMoments(params: {
 function getTemplateBaseZoom(templateId: VideoTemplateId): number {
   switch (templateId) {
     case "primary":
+    case "primary-dhurandhar":
       return 1.06;
     case "cult-eidos":
       return 1.06;
@@ -1287,6 +1468,7 @@ function getTemplateBaseZoom(templateId: VideoTemplateId): number {
 function getTemplateFaceZoom(templateId: VideoTemplateId): number {
   switch (templateId) {
     case "primary":
+    case "primary-dhurandhar":
       return 1.12;
     case "cult-eidos":
       return 1.1;
@@ -1306,6 +1488,7 @@ function getTemplateFaceZoom(templateId: VideoTemplateId): number {
 function getTemplateFallbackZoom(templateId: VideoTemplateId): number {
   switch (templateId) {
     case "primary":
+    case "primary-dhurandhar":
       return 1.08;
     case "cult-eidos":
       return 1.08;
@@ -1369,7 +1552,7 @@ function getTemplateRenderWindow(params: {
 }) {
   const { templateId, durationSec, repMomentsSec } = params;
 
-  if (templateId !== "primary" || repMomentsSec.length === 0 || durationSec <= 0) {
+  if (!isPrimaryTemplateId(templateId) || repMomentsSec.length === 0 || durationSec <= 0) {
     return {
       startSec: 0,
       endSec: durationSec,
@@ -1397,7 +1580,7 @@ function getPrimarySlowMotionWindow(params: {
 }) {
   const { templateId, repMomentsSec, renderWindow, durationSec } = params;
 
-  if (templateId !== "primary" || repMomentsSec.length === 0 || durationSec <= 0) {
+  if (!isPrimaryTemplateId(templateId) || repMomentsSec.length === 0 || durationSec <= 0) {
     return null;
   }
 
@@ -1424,6 +1607,78 @@ function getPrimarySlowMotionWindow(params: {
     startSec: slowStartSec,
     endSec: slowEndSec,
     playbackRate: 0.42
+  };
+}
+
+function getPrimaryMotionState(params: {
+  templateId: VideoTemplateId;
+  renderCurrentTimeSec: number;
+  renderWindow: { startSec: number; endSec: number; durationSec: number };
+  slowMotionWindow: { startSec: number; endSec: number; playbackRate: number } | null;
+}) {
+  if (!isPrimaryTemplateId(params.templateId)) {
+    return {
+      smoothedZoomOffset: 0,
+      heroFocusBlend: 0,
+      predictedFocusYOffset: 0
+    };
+  }
+
+  const clampedTimeSec = clamp(
+    params.renderCurrentTimeSec,
+    params.renderWindow.startSec,
+    params.renderWindow.endSec
+  );
+  const setProgress =
+    params.renderWindow.durationSec > 0
+      ? clamp(
+          (clampedTimeSec - params.renderWindow.startSec) / params.renderWindow.durationSec,
+          0,
+          1
+        )
+      : 0;
+  const pushInZoom = lerp(0, 0.14, easeInOutQuad(setProgress));
+
+  let heroRepZoom = 0;
+  let heroFocusBlend = 0;
+  let predictedFocusYOffset = 0;
+  if (params.slowMotionWindow) {
+    const rampInStartSec = Math.max(
+      params.renderWindow.startSec,
+      params.slowMotionWindow.startSec - 0.28
+    );
+    const rampOutEndSec = Math.min(
+      params.renderWindow.endSec,
+      params.slowMotionWindow.endSec + 0.18
+    );
+    const heroEnvelope = getRampEnvelope(
+      clampedTimeSec,
+      rampInStartSec,
+      params.slowMotionWindow.startSec,
+      params.slowMotionWindow.endSec,
+      rampOutEndSec
+    );
+
+    heroRepZoom = 0.18 * heroEnvelope;
+    heroFocusBlend = heroEnvelope;
+
+    const heroProgress = clamp(
+      (clampedTimeSec - params.slowMotionWindow.startSec) /
+        Math.max(0.001, params.slowMotionWindow.endSec - params.slowMotionWindow.startSec),
+      0,
+      1
+    );
+    const bottomPhaseProgress =
+      heroProgress <= 0.58
+        ? easeInOutQuad(heroProgress / 0.58)
+        : 1 - easeInOutQuad((heroProgress - 0.58) / 0.42);
+    predictedFocusYOffset = 0.16 * bottomPhaseProgress * heroEnvelope;
+  }
+
+  return {
+    smoothedZoomOffset: pushInZoom + heroRepZoom,
+    heroFocusBlend,
+    predictedFocusYOffset
   };
 }
 
@@ -1484,11 +1739,12 @@ export async function renderVideoTemplate(params: {
   }
 
   const canvasStream = canvas.captureStream(24);
-  const needsAudioTrack = params.templateId === "rep-bingo" || params.templateId === "primary";
+  const needsAudioTrack =
+    params.templateId === "rep-bingo" || isPrimaryTemplateId(params.templateId);
   const audioContext = needsAudioTrack ? new AudioContext() : null;
   const loadPrimaryTrackBuffer =
-    audioContext && params.templateId === "primary"
-      ? createAudioBufferLoader(audioContext, primaryTemplateTrackUrl)
+    audioContext && isPrimaryTemplateId(params.templateId)
+      ? createAudioBufferLoader(audioContext, getPrimaryTrackSourceUrl(params.templateId))
       : null;
   const audioDestination = audioContext?.createMediaStreamDestination() ?? null;
   const outputStream =
@@ -1503,6 +1759,8 @@ export async function renderVideoTemplate(params: {
   let animationFrameId: number | null = null;
   let detectionInFlight = false;
   let lastDetectionAt = 0;
+  let detectedFaceFocusX: number | null = null;
+  let detectedFaceFocusY: number | null = null;
   let targetFocusX = 0.5;
   let targetFocusY = 0.38;
   let targetZoom = getTemplateBaseZoom(params.templateId);
@@ -1515,6 +1773,7 @@ export async function renderVideoTemplate(params: {
   let didFinalize = false;
   let activePrimaryTrackSource: AudioBufferSourceNode | null = null;
   let primaryTrackBuffer: AudioBuffer | null = null;
+  let primaryLogoImage: HTMLImageElement | null = null;
   const titleText = params.titleText ?? "Strength Session";
   const subjectName = params.subjectName ?? "Cult Vision";
 
@@ -1581,25 +1840,42 @@ export async function renderVideoTemplate(params: {
       .then((faces) => {
         const firstFace = faces[0]?.boundingBox;
         if (!firstFace || sourceVideo.videoWidth === 0 || sourceVideo.videoHeight === 0) {
+          detectedFaceFocusX = null;
+          detectedFaceFocusY = null;
+          if (isPrimaryTemplateId(params.templateId)) {
+            return;
+          }
           targetFocusX = 0.5;
           targetFocusY = params.templateId === "depth-drive" ? 0.48 : 0.4;
           targetZoom = getTemplateFallbackZoom(params.templateId);
           return;
         }
 
-        targetFocusX = clamp(
+        const nextFaceFocusX = clamp(
           (firstFace.x + firstFace.width / 2) / sourceVideo.videoWidth,
           0.28,
           0.72
         );
-        targetFocusY = clamp(
+        const nextFaceFocusY = clamp(
           (firstFace.y + firstFace.height * 1.4) / sourceVideo.videoHeight,
           params.templateId === "depth-drive" ? 0.28 : 0.2,
           params.templateId === "depth-drive" ? 0.78 : 0.7
         );
+        detectedFaceFocusX = nextFaceFocusX;
+        detectedFaceFocusY = nextFaceFocusY;
+        if (isPrimaryTemplateId(params.templateId)) {
+          return;
+        }
+        targetFocusX = nextFaceFocusX;
+        targetFocusY = nextFaceFocusY;
         targetZoom = getTemplateFaceZoom(params.templateId);
       })
       .catch(() => {
+        detectedFaceFocusX = null;
+        detectedFaceFocusY = null;
+        if (isPrimaryTemplateId(params.templateId)) {
+          return;
+        }
         targetFocusX = 0.5;
         targetFocusY = params.templateId === "depth-drive" ? 0.48 : 0.4;
         targetZoom = getTemplateFallbackZoom(params.templateId);
@@ -1635,12 +1911,44 @@ export async function renderVideoTemplate(params: {
     }
 
     maybeDetectFace();
+
+    const currentSourceTimeSec = sourceVideo.currentTime;
+    const primaryMotionState = getPrimaryMotionState({
+      templateId: params.templateId,
+      renderCurrentTimeSec: currentSourceTimeSec,
+      renderWindow,
+      slowMotionWindow
+    });
+    if (isPrimaryTemplateId(params.templateId)) {
+      const hasDetectedFace = detectedFaceFocusX !== null && detectedFaceFocusY !== null;
+      const heroSubjectFocusX = hasDetectedFace ? detectedFaceFocusX ?? 0.5 : 0.5;
+      const estimatedHeroFocusY = clamp(
+        0.38 + primaryMotionState.predictedFocusYOffset,
+        0.28,
+        0.62
+      );
+      const heroSubjectFocusY = hasDetectedFace
+        ? clamp(
+            (detectedFaceFocusY ?? estimatedHeroFocusY) +
+              primaryMotionState.predictedFocusYOffset * 0.34,
+            0.22,
+            0.7
+          )
+        : estimatedHeroFocusY;
+      const followBlend = hasDetectedFace
+        ? clamp(0.2 + primaryMotionState.heroFocusBlend * 0.8, 0, 1)
+        : primaryMotionState.heroFocusBlend;
+      targetFocusX = lerp(0.5, heroSubjectFocusX, followBlend);
+      targetFocusY = lerp(0.38, heroSubjectFocusY, followBlend);
+      targetZoom = getTemplateBaseZoom(params.templateId) + primaryMotionState.smoothedZoomOffset;
+    }
+
     focusX += (targetFocusX - focusX) * 0.12;
     focusY += (targetFocusY - focusY) * 0.12;
     zoom += (targetZoom - zoom) * 0.08;
 
     const renderCurrentTimeSec = clamp(
-      sourceVideo.currentTime,
+      currentSourceTimeSec,
       renderWindow.startSec,
       renderWindow.endSec
     );
@@ -1669,6 +1977,10 @@ export async function renderVideoTemplate(params: {
       params.templateId === "rep-bingo" && bubbleAgeSec >= 0 && bubbleAgeSec <= 0.62
         ? 1 - bubbleAgeSec / 0.62
         : 0;
+    const activePrimaryRepPulseStrength =
+      isPrimaryTemplateId(params.templateId) && bubbleAgeSec >= 0 && bubbleAgeSec <= 0.32
+        ? 1 - bubbleAgeSec / 0.32
+        : 0;
 
     drawFrameForTemplate({
       templateId: params.templateId,
@@ -1682,7 +1994,9 @@ export async function renderVideoTemplate(params: {
       activeRepBubbleStrength,
       completedRepCount,
       titleText,
-      subjectName
+      subjectName,
+      primaryLogoImage,
+      primaryRepPulseStrength: activePrimaryRepPulseStrength
     });
 
     const progressRatio =
@@ -1692,11 +2006,11 @@ export async function renderVideoTemplate(params: {
     params.onProgress?.({
       progress: progressRatio,
       message: (() => {
-        if (params.templateId === "primary") {
-          return progressRatio < 0.22
-            ? "Finding the working set window..."
+        if (isPrimaryTemplateId(params.templateId)) {
+          return progressRatio < 0.2
+            ? "Preparing the Primary template..."
             : progressRatio < 0.84
-              ? "Rendering the hero cut, soundtrack, and last-rep slow motion..."
+              ? "Rendering the Primary template..."
               : "Finishing the Primary export...";
         }
         if (params.templateId === "rep-bingo") {
@@ -1758,7 +2072,7 @@ export async function renderVideoTemplate(params: {
   params.onProgress?.({
     progress: 0.04,
     message:
-      params.templateId === "primary"
+      isPrimaryTemplateId(params.templateId)
         ? "Preparing the Primary template..."
         : params.templateId === "rep-bingo"
         ? "Preparing the rep-accent template..."
@@ -1773,6 +2087,33 @@ export async function renderVideoTemplate(params: {
               : "Preparing the Clean Strength template..."
   });
 
+  if (isPrimaryTemplateId(params.templateId) && loadPrimaryTrackBuffer) {
+    try {
+      primaryTrackBuffer = await loadPrimaryTrackBuffer();
+    } catch {
+      cleanup();
+      throw new Error("Could not load the soundtrack for the Primary template.");
+    }
+  }
+
+  if (isPrimaryTemplateId(params.templateId)) {
+    try {
+      primaryLogoImage = await loadCultLogoImage();
+    } catch {
+      cleanup();
+      throw new Error("Could not load the Cult logo for the Primary template.");
+    }
+  }
+
+  try {
+    if (renderWindow.startSec > 0.01) {
+      await seekVideo(sourceVideo, renderWindow.startSec);
+    }
+  } catch {
+    cleanup();
+    throw new Error("The source video could not start playing for template rendering.");
+  }
+
   recorder.start(400);
   try {
     if (audioContext) {
@@ -1782,26 +2123,19 @@ export async function renderVideoTemplate(params: {
     // The generated export can still proceed without audible monitor output.
   }
 
-  if (params.templateId === "primary" && loadPrimaryTrackBuffer) {
-    try {
-      primaryTrackBuffer = await loadPrimaryTrackBuffer();
-    } catch {
-      cleanup();
-      throw new Error("Could not load the soundtrack for the Primary template.");
-    }
-  }
-
   try {
-    if (renderWindow.startSec > 0.01) {
-      await seekVideo(sourceVideo, renderWindow.startSec);
-    }
     await sourceVideo.play();
   } catch {
     cleanup();
     throw new Error("The source video could not start playing for template rendering.");
   }
 
-  if (params.templateId === "primary" && audioContext && audioDestination && primaryTrackBuffer) {
+  if (
+    isPrimaryTemplateId(params.templateId) &&
+    audioContext &&
+    audioDestination &&
+    primaryTrackBuffer
+  ) {
     const primaryTrackSource = audioContext.createBufferSource();
     const primaryTrackGain = audioContext.createGain();
 

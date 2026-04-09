@@ -108,6 +108,7 @@ export interface LiveOverlaySegment {
 
 export type VideoTemplateId =
   | "primary"
+  | "primary-dhurandhar"
   | "cult-eidos"
   | "gym-highlight"
   | "rep-bingo"

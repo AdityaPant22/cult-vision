@@ -7,7 +7,9 @@ interface TemplateSamplePosterProps {
 function getSampleTitle(templateId: VideoTemplateId) {
   switch (templateId) {
     case "primary":
-      return "Auto-trim set cut";
+      return "Auto-trim hero cut";
+    case "primary-dhurandhar":
+      return "Auto-trim hero cut";
     case "cult-eidos":
       return "Editorial coaching reel";
     case "depth-drive":
@@ -24,6 +26,8 @@ function getSampleTitle(templateId: VideoTemplateId) {
 }
 
 export function TemplateSamplePoster({ templateId }: TemplateSamplePosterProps) {
+  const isPrimaryFamily = templateId === "primary" || templateId === "primary-dhurandhar";
+
   return (
     <div className={`template-sample template-sample-${templateId}`}>
       <div className="template-sample-top">
@@ -33,7 +37,7 @@ export function TemplateSamplePoster({ templateId }: TemplateSamplePosterProps) 
 
       <div className="template-sample-stage">
         <div className="template-sample-silhouette" />
-        {templateId === "primary" ? (
+        {isPrimaryFamily ? (
           <>
             <div className="template-sample-window" />
             <div className="template-sample-trimline template-sample-trimline-left" />
@@ -53,11 +57,13 @@ export function TemplateSamplePoster({ templateId }: TemplateSamplePosterProps) 
 
       <div className="template-sample-bottom">
         <div className="template-sample-chip-row">
-          {templateId === "primary" ? (
+          {isPrimaryFamily ? (
             <>
               <span className="template-sample-chip ok">Auto Trim</span>
-              <span className="template-sample-chip ok">1s Lead-in</span>
-              <span className="template-sample-chip warn">1s Tail</span>
+              <span className="template-sample-chip ok">
+                {templateId === "primary" ? "Track 1" : "Dhurandhar"}
+              </span>
+              <span className="template-sample-chip warn">Hero Cut</span>
             </>
           ) : templateId === "cult-eidos" ? (
             <>
@@ -88,7 +94,9 @@ export function TemplateSamplePoster({ templateId }: TemplateSamplePosterProps) 
 
         <strong className="template-sample-title">
           {templateId === "primary"
-            ? "Primary"
+            ? "Primary / Track 1"
+            : templateId === "primary-dhurandhar"
+              ? "Primary / Dhurandhar"
             : templateId === "cult-eidos"
             ? "Barbell Squat"
             : templateId === "gym-highlight"
@@ -102,7 +110,7 @@ export function TemplateSamplePoster({ templateId }: TemplateSamplePosterProps) 
                     : "Rep Marks"}
         </strong>
         <span className="template-sample-subtitle">
-          {templateId === "primary"
+          {isPrimaryFamily
             ? "working set only."
             : templateId === "cult-eidos"
             ? "done right."
