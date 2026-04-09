@@ -4,8 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / ".env")
 DATA_DIR = ROOT_DIR / "backend" / "data"
 MODEL_DIR = ROOT_DIR / "backend" / "models"
 
@@ -41,6 +43,14 @@ class Settings:
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     )
+
+    # Cloudinary (unsigned upload)
+    cloudinary_cloud_name: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    cloudinary_upload_preset: str = os.getenv("CLOUDINARY_UPLOAD_PRESET", "vedios")
+
+    # Supabase
+    supabase_url: str = os.getenv("SUPABASE_URL", "")
+    supabase_key: str = os.getenv("SUPABASE_KEY", "")
 
 
 settings = Settings()

@@ -1,40 +1,31 @@
-import { getVideoTemplates } from "../editing/videoTemplates";
+import { TemplateProcessingState } from "../features/recording-library/model/types";
 import { formatDuration } from "../shared/lib/format";
-import { EditedRecordingVersion, RecordingLibraryItem, VideoTemplateId } from "../types";
+import { RecordingLibraryItem, VideoTemplateId } from "../types";
 import { Modal } from "./Modal";
-
-interface TemplateProcessingState {
-  recordingId: string;
-  templateId: VideoTemplateId;
-  progress: number;
-  message: string;
-  error: string | null;
-}
+import { TemplateGallery } from "./TemplateGallery";
+import { TemplatePreviewVideo } from "./TemplatePreviewVideo";
 
 interface TemplatesModalProps {
   open: boolean;
   recording: RecordingLibraryItem | null;
-  editedVersion: EditedRecordingVersion | null;
-  processingState: TemplateProcessingState | null;
-  onApplyTemplate: (templateId: VideoTemplateId) => void;
+  processingStates: Partial<Record<VideoTemplateId, TemplateProcessingState>>;
+  queuedTemplateIds: VideoTemplateId[];
+  onStartRender: (templateId: VideoTemplateId) => void;
+  onSelectTemplate: (templateId: VideoTemplateId) => void;
+  onRetryTemplate: (templateId: VideoTemplateId) => void;
   onClose: () => void;
 }
 
 export function TemplatesModal({
   open,
   recording,
-  editedVersion,
-  processingState,
-  onApplyTemplate,
+  processingStates,
+  queuedTemplateIds,
+  onStartRender,
+  onSelectTemplate,
+  onRetryTemplate,
   onClose
 }: TemplatesModalProps) {
-  const templates = getVideoTemplates();
-  const isProcessing =
-    processingState !== null &&
-    processingState.recordingId === recording?.id &&
-    !processingState.error;
-  const hasRepTiming = (recording?.templateRepCount ?? 0) > 0;
-
   return (
     <Modal open={open} title="Video Templates" onClose={onClose}>
       {!recording ? (
@@ -46,18 +37,17 @@ export function TemplatesModal({
               <p className="eyebrow">Latest Set</p>
               <h3>{recording.userName}</h3>
               <p className="subtle-copy">
-                {formatDuration(recording.durationSec)} • {new Date(recording.startedAt).toLocaleString()}
+                {formatDuration(recording.durationSec)} •{" "}
+                {new Date(recording.startedAt).toLocaleString()}
               </p>
             </div>
             <span className={`status-pill ${recording.status}`}>{recording.status}</span>
           </div>
 
           {recording.playbackUrl ? (
-            <video
+            <TemplatePreviewVideo
               className="template-source-video"
               controls
-              playsInline
-              preload="metadata"
               src={recording.playbackUrl}
             />
           ) : (
@@ -69,123 +59,49 @@ export function TemplatesModal({
             </div>
           )}
 
-          <div className="template-grid">
-            {templates.map((template) => {
-              const isSelected = processingState?.templateId === template.id;
-              const needsRepTiming = !!template.requiresRepTiming;
-              const canUseTemplate = recording.playbackUrl && (!needsRepTiming || hasRepTiming);
-
-              return (
-                <article key={template.id} className={`template-card ${isSelected ? "active" : ""}`}>
-                  <div className="panel-header">
-                    <div>
-                      <strong>{template.name}</strong>
-                      <p className="subtle-copy">{template.shortLabel}</p>
-                    </div>
-                    {editedVersion?.templateId === template.id ? (
-                      <span className="pill">Ready</span>
-                    ) : null}
-                  </div>
-
-                  <p className="subtle-copy">{template.description}</p>
-
-                  <div className="chip-row">
-                    {template.effects.map((effect) => (
-                      <span key={effect} className="chip">
-                        {effect}
-                      </span>
-                    ))}
-                  </div>
-
-                  {needsRepTiming && !hasRepTiming ? (
-                    <div className="template-note">
-                      <strong>Waiting for rep timing</strong>
-                      <p className="subtle-copy">
-                        This template uses backend rep analysis so the `+1` bubble lands in sync
-                        with each completed rep.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {needsRepTiming &&
-                  hasRepTiming &&
-                  recording?.templateTimingSource === "live" ? (
-                    <div className="template-note">
-                      <strong>Using live rep timing</strong>
-                      <p className="subtle-copy">
-                        This edit will sync from the rep hits captured during recording because the
-                        final backend re-score came back weaker than the live session.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {needsRepTiming &&
-                  hasRepTiming &&
-                  recording?.templateTimingSource === "estimated" ? (
-                    <div className="template-note">
-                      <strong>Using estimated rep spacing</strong>
-                      <p className="subtle-copy">
-                        Final rep count is available, but exact rep timestamps are being estimated
-                        across the clip.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => onApplyTemplate(template.id)}
-                    disabled={!canUseTemplate || isProcessing}
-                  >
-                    {isProcessing ? "Rendering..." : editedVersion?.templateId === template.id ? "Reapply Template" : "Use Template"}
-                  </button>
-                </article>
-              );
-            })}
+          <div className="template-section-header">
+            <div>
+              <p className="eyebrow">Template Samples</p>
+              <h3>Preview the look, then start rendering the ones you want</h3>
+            </div>
+            {recording.editedVersion ? (
+              <a
+                className="secondary-button"
+                href={recording.editedVersion.playbackUrl}
+                download={`${recording.userName.toLowerCase().replace(/\s+/g, "-")}-${recording.editedVersion.templateId}.webm`}
+              >
+                Download Chosen Edit
+              </a>
+            ) : null}
           </div>
 
-          {processingState?.recordingId === recording.id ? (
-            <div className={`template-progress-card ${processingState.error ? "failed" : ""}`}>
-              <div className="panel-header">
-                <strong>{processingState.error ? "Template Failed" : "Rendering Edit"}</strong>
-                <span>{Math.round(processingState.progress * 100)}%</span>
-              </div>
-              <div className="template-progress-track">
-                <div
-                  className="template-progress-fill"
-                  style={{ width: `${Math.max(6, Math.round(processingState.progress * 100))}%` }}
-                />
-              </div>
-              <p className="subtle-copy">
-                {processingState.error ?? processingState.message}
-              </p>
-            </div>
-          ) : null}
-
-          {editedVersion ? (
+          {recording.editedVersion ? (
             <div className="template-result-card">
               <div className="panel-header">
                 <div>
-                  <p className="eyebrow">Edited Result</p>
-                  <h3>{editedVersion.templateName}</h3>
+                  <p className="eyebrow">Current Preview</p>
+                  <h3>{recording.editedVersion.templateName}</h3>
                 </div>
-                <a
-                  className="secondary-button"
-                  href={editedVersion.playbackUrl}
-                  download={`${recording.userName.toLowerCase().replace(/\s+/g, "-")}-${editedVersion.templateId}.webm`}
-                >
-                  Download Edit
-                </a>
+                <span className="pill">Active Preview</span>
               </div>
-              <video
+              <TemplatePreviewVideo
                 className="template-result-video"
                 controls
-                playsInline
-                preload="metadata"
-                src={editedVersion.playbackUrl}
+                autoPlay
+                loop
+                src={recording.editedVersion.playbackUrl}
               />
             </div>
           ) : null}
+
+          <TemplateGallery
+            recording={recording}
+            processingStates={processingStates}
+            queuedTemplateIds={queuedTemplateIds}
+            onStartRender={onStartRender}
+            onSelectTemplate={onSelectTemplate}
+            onRetryTemplate={onRetryTemplate}
+          />
         </>
       )}
     </Modal>

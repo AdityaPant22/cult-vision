@@ -5,12 +5,14 @@ import { RecordingScreen } from "../components/RecordingScreen";
 import { SelectUserScreen } from "../components/SelectUserScreen";
 import { TermsScreen } from "../components/TermsScreen";
 import { LiveAnalysisUpdate } from "../api/analysisApi";
+import { TemplateProcessingState } from "../features/recording-library/model/types";
 import {
   AuthenticatedUserSession,
   KioskState,
   Recording,
   RecordingLibraryItem,
-  SupportedExerciseId
+  SupportedExerciseId,
+  VideoTemplateId
 } from "../types";
 
 interface KioskPageProps {
@@ -28,6 +30,9 @@ interface KioskPageProps {
   countdownSec: number | null;
   isBackendOnline: boolean;
   isTemplateProcessing: boolean;
+  templateProcessingStates: Partial<Record<VideoTemplateId, TemplateProcessingState>>;
+  queuedTemplateIds: VideoTemplateId[];
+  onStartTemplateRender: (templateId: VideoTemplateId) => void;
   onSubmitPhone: (phone: string) => void;
   onSelectUser: (sessionUserId: string) => void;
   onAcceptTerms: () => void;
@@ -38,6 +43,8 @@ interface KioskPageProps {
   onAddNewUser: () => void;
   onEndActiveUser: () => void;
   onOpenTemplates: () => void;
+  onSelectTemplate: (templateId: VideoTemplateId) => void;
+  onRetryTemplate: (templateId: VideoTemplateId) => void;
   onSwitchUser: (sessionUserId: string) => void;
 }
 
@@ -56,6 +63,9 @@ export function KioskPage({
   countdownSec,
   isBackendOnline,
   isTemplateProcessing,
+  templateProcessingStates,
+  queuedTemplateIds,
+  onStartTemplateRender,
   onSubmitPhone,
   onSelectUser,
   onAcceptTerms,
@@ -66,6 +76,8 @@ export function KioskPage({
   onAddNewUser,
   onEndActiveUser,
   onOpenTemplates,
+  onSelectTemplate,
+  onRetryTemplate,
   onSwitchUser
 }: KioskPageProps) {
   const shouldShowRecordingScreen =
@@ -140,11 +152,16 @@ export function KioskPage({
         otherUsers={otherAuthenticatedUsers}
         isBackendOnline={isBackendOnline}
         selectedExerciseId={selectedExerciseId}
+        templateProcessingStates={templateProcessingStates}
+        queuedTemplateIds={queuedTemplateIds}
+        onStartTemplateRender={onStartTemplateRender}
         onRecordNextSet={onStartRecording}
         onEndActiveUser={onEndActiveUser}
         onAddNewUser={onAddNewUser}
         onSelectExercise={onSelectExercise}
         onOpenTemplates={onOpenTemplates}
+        onSelectTemplate={onSelectTemplate}
+        onRetryTemplate={onRetryTemplate}
         onSwitchUser={onSwitchUser}
         isTemplateProcessing={isTemplateProcessing}
       />

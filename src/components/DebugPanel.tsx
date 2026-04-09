@@ -3,9 +3,7 @@ import { AppState, Recording } from "../types";
 interface DebugPanelProps {
   open: boolean;
   state: AppState;
-  remainingWarningSec: number;
   onClose: () => void;
-  onToggleTimeout: (enabled: boolean) => void;
   onResetDevice: () => void;
 }
 
@@ -20,9 +18,7 @@ function groupRecordingsByUser(recordings: Recording[]) {
 export function DebugPanel({
   open,
   state,
-  remainingWarningSec,
   onClose,
-  onToggleTimeout,
   onResetDevice
 }: DebugPanelProps) {
   const recordingGroups = groupRecordingsByUser(state.deviceSession.recordings);
@@ -37,23 +33,6 @@ export function DebugPanel({
         <button className="ghost-button" onClick={onClose} type="button">
           Close
         </button>
-      </div>
-
-      <div className="debug-section">
-        <label className="toggle-row">
-          <span>Inactivity timeout</span>
-          <input
-            type="checkbox"
-            checked={state.inactivity.enabled}
-            onChange={(event) => onToggleTimeout(event.target.checked)}
-          />
-        </label>
-        <p className="subtle-copy">
-          60s idle warning with {state.inactivity.warningCountdownSec}s reset countdown.
-        </p>
-        {state.inactivity.warningStartedAt ? (
-          <div className="warning-inline">Resetting in {remainingWarningSec}s</div>
-        ) : null}
       </div>
 
       <div className="debug-section">

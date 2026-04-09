@@ -106,7 +106,14 @@ export interface LiveOverlaySegment {
   status: OverlaySegmentStatus;
 }
 
-export type VideoTemplateId = "gym-highlight" | "rep-bingo";
+export type VideoTemplateId =
+  | "primary"
+  | "cult-eidos"
+  | "gym-highlight"
+  | "rep-bingo"
+  | "depth-drive"
+  | "iron-echo"
+  | "arena-lift";
 
 export interface EditedRecordingVersion {
   templateId: VideoTemplateId;
@@ -128,6 +135,8 @@ export interface RecordingLibraryItem {
   playbackUrl: string | null;
   mimeType: string | null;
   editedVersion: EditedRecordingVersion | null;
+  editedVersions: EditedRecordingVersion[];
+  selectedEditedTemplateId: VideoTemplateId | null;
   analysisResult: RecordingAnalysisResult | null;
   templateRepEvents: RecordingRepEvent[];
   templateRepCount: number;

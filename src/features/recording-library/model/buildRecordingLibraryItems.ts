@@ -4,13 +4,42 @@ import {
   mapAnalysisResult
 } from "../../../api/analysisApi";
 import { Recording, RecordingLibraryItem } from "../../../types";
-import { EditedRecordingAsset, RecordingAsset } from "./types";
+import {
+  EditedRecordingAsset,
+  EditedRecordingAssetsByRecording,
+  RecordingAsset,
+  SelectedTemplateIdsByRecording
+} from "./types";
+
+function mapEditedVersions(
+  editedAssets: Partial<Record<string, EditedRecordingAsset>> | undefined,
+  selectedTemplateId: string | null | undefined
+) {
+  const editedVersions = Object.values(editedAssets ?? {})
+    .filter((asset): asset is EditedRecordingAsset => !!asset)
+    .map((asset) => ({
+      templateId: asset.templateId,
+      templateName: asset.templateName,
+      playbackUrl: asset.url,
+      mimeType: asset.mimeType,
+      createdAt: asset.createdAt
+    }));
+
+  const editedVersion =
+    editedVersions.find((version) => version.templateId === selectedTemplateId) ?? null;
+
+  return {
+    editedVersions,
+    editedVersion
+  };
+}
 
 export function buildRecordingLibraryItems(params: {
   localRecordings: Recording[];
   serverRecordings: BackendRecordingItem[];
   recordingAssets: Record<string, RecordingAsset>;
-  editedRecordingAssets: Record<string, EditedRecordingAsset>;
+  editedRecordingAssets: EditedRecordingAssetsByRecording;
+  selectedTemplateIds: SelectedTemplateIdsByRecording;
   deviceName: string;
   zoneName: string;
 }): RecordingLibraryItem[] {
@@ -19,6 +48,12 @@ export function buildRecordingLibraryItems(params: {
   params.localRecordings.forEach((recording) => {
     const localAsset = params.recordingAssets[recording.id];
     const liveRepEvents = recording.liveRepEvents ?? [];
+    const selectedTemplateId = params.selectedTemplateIds[recording.id] ?? null;
+    const { editedVersion, editedVersions } = mapEditedVersions(
+      params.editedRecordingAssets[recording.id],
+      selectedTemplateId
+    );
+
     merged.set(recording.id, {
       id: recording.id,
       userName: recording.userName,
@@ -30,15 +65,9 @@ export function buildRecordingLibraryItems(params: {
       status: recording.status,
       playbackUrl: localAsset?.url ?? null,
       mimeType: localAsset?.mimeType ?? null,
-      editedVersion: params.editedRecordingAssets[recording.id]
-        ? {
-            templateId: params.editedRecordingAssets[recording.id].templateId,
-            templateName: params.editedRecordingAssets[recording.id].templateName,
-            playbackUrl: params.editedRecordingAssets[recording.id].url,
-            mimeType: params.editedRecordingAssets[recording.id].mimeType,
-            createdAt: params.editedRecordingAssets[recording.id].createdAt
-          }
-        : null,
+      editedVersion,
+      editedVersions,
+      selectedEditedTemplateId: selectedTemplateId,
       analysisResult: null,
       templateRepEvents: liveRepEvents,
       templateRepCount: liveRepEvents.length,
@@ -51,23 +80,33 @@ export function buildRecordingLibraryItems(params: {
     const localAsset = params.recordingAssets[recording.id];
     const analysisResult = mapAnalysisResult(recording.latest_result);
     const liveRepEvents = previous?.templateRepEvents ?? [];
-    const hasFinalRepEvents = (analysisResult?.repEvents.length ?? 0) > 0;
-    const hasEstimatedFinalRepCount = !hasFinalRepEvents && (analysisResult?.repCount ?? 0) > 0;
-    const templateRepEvents = hasFinalRepEvents
-      ? analysisResult?.repEvents ?? []
-      : liveRepEvents;
-    const templateRepCount = hasFinalRepEvents
-      ? analysisResult?.repEvents.length ?? 0
-      : hasEstimatedFinalRepCount
-        ? analysisResult?.repCount ?? 0
-        : liveRepEvents.length;
-    const templateTimingSource: RecordingLibraryItem["templateTimingSource"] = hasFinalRepEvents
-      ? "final"
-      : hasEstimatedFinalRepCount
-        ? "estimated"
-        : liveRepEvents.length > 0
+    const finalRepEvents = analysisResult?.repEvents ?? [];
+    const finalRepEventCount = finalRepEvents.length;
+    const liveRepEventCount = liveRepEvents.length;
+    const hasEstimatedFinalRepCount =
+      finalRepEventCount === 0 && (analysisResult?.repCount ?? 0) > 0;
+    const shouldUseFinalRepEvents =
+      finalRepEventCount > 0 && finalRepEventCount >= liveRepEventCount;
+    const templateRepEvents = shouldUseFinalRepEvents ? finalRepEvents : liveRepEvents;
+    const templateRepCount =
+      templateRepEvents.length > 0
+        ? templateRepEvents.length
+        : hasEstimatedFinalRepCount
+          ? analysisResult?.repCount ?? 0
+          : 0;
+    const templateTimingSource: RecordingLibraryItem["templateTimingSource"] =
+      shouldUseFinalRepEvents
+        ? "final"
+        : liveRepEventCount > 0
           ? "live"
-          : "none";
+          : hasEstimatedFinalRepCount
+            ? "estimated"
+            : "none";
+    const selectedTemplateId = params.selectedTemplateIds[recording.id] ?? null;
+    const { editedVersion, editedVersions } = mapEditedVersions(
+      params.editedRecordingAssets[recording.id],
+      selectedTemplateId
+    );
 
     merged.set(recording.id, {
       id: recording.id,
@@ -80,15 +119,10 @@ export function buildRecordingLibraryItems(params: {
       status: recording.status,
       playbackUrl: localAsset?.url ?? absoluteAssetUrl(recording.asset_url),
       mimeType: localAsset?.mimeType ?? recording.mime_type,
-      editedVersion: params.editedRecordingAssets[recording.id]
-        ? {
-            templateId: params.editedRecordingAssets[recording.id].templateId,
-            templateName: params.editedRecordingAssets[recording.id].templateName,
-            playbackUrl: params.editedRecordingAssets[recording.id].url,
-            mimeType: params.editedRecordingAssets[recording.id].mimeType,
-            createdAt: params.editedRecordingAssets[recording.id].createdAt
-          }
-        : previous?.editedVersion ?? null,
+      editedVersion: editedVersion ?? previous?.editedVersion ?? null,
+      editedVersions:
+        editedVersions.length > 0 ? editedVersions : previous?.editedVersions ?? [],
+      selectedEditedTemplateId: selectedTemplateId,
       analysisResult: analysisResult ?? previous?.analysisResult ?? null,
       templateRepEvents,
       templateRepCount,

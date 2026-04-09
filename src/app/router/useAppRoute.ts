@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
 
-export type AppRoute = "kiosk" | "analysis";
+export type AppRoute = "kiosk" | "analysis" | "setup";
 
 export function getCurrentRoute(): AppRoute {
   if (typeof window === "undefined") {
     return "kiosk";
   }
 
-  return window.location.pathname === "/analysis" ? "analysis" : "kiosk";
+  if (window.location.pathname === "/analysis") {
+    return "analysis";
+  }
+
+  if (window.location.pathname === "/setup") {
+    return "setup";
+  }
+
+  return "kiosk";
 }
 
 export function useAppRoute() {
@@ -23,7 +31,8 @@ export function useAppRoute() {
   }, []);
 
   const navigateTo = (nextRoute: AppRoute) => {
-    const nextPath = nextRoute === "analysis" ? "/analysis" : "/";
+    const nextPath =
+      nextRoute === "analysis" ? "/analysis" : nextRoute === "setup" ? "/setup" : "/";
     window.history.pushState({}, "", nextPath);
     setRoute(nextRoute);
   };

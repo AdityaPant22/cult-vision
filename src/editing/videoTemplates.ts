@@ -1,4 +1,5 @@
 import { RecordingRepEvent, VideoTemplateId } from "../types";
+import primaryTemplateTrackUrl from "../assets/primary-template-track.mp3";
 
 export interface VideoTemplateDefinition {
   id: VideoTemplateId;
@@ -40,20 +41,61 @@ declare global {
 
 const TEMPLATE_DEFINITIONS: VideoTemplateDefinition[] = [
   {
-    id: "gym-highlight",
-    name: "Gym Highlight",
-    shortLabel: "Punchy zoom edit",
+    id: "primary",
+    name: "Primary",
+    shortLabel: "Auto-trim hero cut",
     description:
-      "Adds a cinematic crop, a face-aware punch-in when available, higher contrast, and a stronger gym-grade look.",
-    effects: ["Face punch-in", "Crisp contrast", "Subtle vignette", "Highlight finish"]
+      "Trims to the working set, gives the final rep a slow-motion hero beat, and lays in a music bed with a premium vertical story layout.",
+    effects: ["Auto cull", "Last rep slow-mo", "Music bed", "Hero layout"],
+    requiresRepTiming: true
+  },
+  {
+    id: "cult-eidos",
+    name: "Lift Story",
+    shortLabel: "Editorial coaching reel",
+    description:
+      "A premium story-style edit with coaching pills, a polished dark grade, and a refined title finish.",
+    effects: ["Editorial pills", "Dark premium grade", "Story finish", "Coach card"]
+  },
+  {
+    id: "depth-drive",
+    name: "Amber Frame",
+    shortLabel: "Warm cinematic lift",
+    description:
+      "A warm, cinematic cut with a rich amber grade, elegant title block, and understated performance feel.",
+    effects: ["Warm grade", "Elegant footer", "Soft vignette", "Cinematic finish"]
+  },
+  {
+    id: "iron-echo",
+    name: "Noir Motion",
+    shortLabel: "Monochrome studio finish",
+    description:
+      "A monochrome studio look with crisp contrast, subtle borders, and a clean premium caption treatment.",
+    effects: ["Monochrome grade", "Thin frame", "Studio caption", "High contrast"]
+  },
+  {
+    id: "arena-lift",
+    name: "Coach Slate",
+    shortLabel: "Performance rail edit",
+    description:
+      "A modern coaching layout with a clean stat rail, cool blue finish, and subtle performance cues.",
+    effects: ["Cool stat rail", "Performance panel", "Blue accents", "Modern coaching look"]
+  },
+  {
+    id: "gym-highlight",
+    name: "Clean Strength",
+    shortLabel: "Minimal premium cut",
+    description:
+      "A clean, minimal export with crisp framing, tasteful copy, and a premium gym-grade finish.",
+    effects: ["Clean lower third", "Face-aware framing", "Soft contrast", "Minimal overlay"]
   },
   {
     id: "rep-bingo",
-    name: "Rep Bingo",
-    shortLabel: "Synced +1 rep pops",
+    name: "Rep Marks",
+    shortLabel: "Subtle rep accents",
     description:
-      "Adds a +1 bubble and a celebratory bingo chime each time a rep completes, using backend rep timing when it is available.",
-    effects: ["Rep-synced +1 bubble", "Bingo sound", "Live rep total", "Energetic overlay"],
+      "Adds tasteful rep accents with synced micro-pops and a lightweight chime whenever a rep lands.",
+    effects: ["Rep micro-pop", "Soft chime", "Rep counter", "Minimal overlay"],
     requiresRepTiming: true
   }
 ];
@@ -66,6 +108,26 @@ function createHiddenVideo(sourceUrl: string): HTMLVideoElement {
   video.preload = "auto";
   video.crossOrigin = "anonymous";
   return video;
+}
+
+function createAudioBufferLoader(audioContext: AudioContext, sourceUrl: string) {
+  let cachedPromise: Promise<AudioBuffer> | null = null;
+
+  return async () => {
+    if (!cachedPromise) {
+      cachedPromise = fetch(sourceUrl)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error("Could not load the soundtrack for this template.");
+          }
+
+          return response.arrayBuffer();
+        })
+        .then((buffer) => audioContext.decodeAudioData(buffer.slice(0)));
+    }
+
+    return cachedPromise;
+  };
 }
 
 function waitForEvent(
@@ -95,8 +157,42 @@ function waitForEvent(
   });
 }
 
+function seekVideo(target: HTMLVideoElement, timeSec: number): Promise<void> {
+  if (!Number.isFinite(timeSec)) {
+    return Promise.resolve();
+  }
+
+  const safeTargetTime = Math.max(0, timeSec);
+  if (Math.abs(target.currentTime - safeTargetTime) < 0.04) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const handleSeeked = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Could not seek the source video for template trimming."));
+    };
+    const cleanup = () => {
+      target.removeEventListener("seeked", handleSeeked);
+      target.removeEventListener("error", handleError);
+    };
+
+    target.addEventListener("seeked", handleSeeked, { once: true });
+    target.addEventListener("error", handleError, { once: true });
+    target.currentTime = safeTargetTime;
+  });
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function lerp(start: number, end: number, amount: number): number {
+  return start + (end - start) * amount;
 }
 
 function getTemplateDefinition(templateId: VideoTemplateId): VideoTemplateDefinition {
@@ -104,7 +200,7 @@ function getTemplateDefinition(templateId: VideoTemplateId): VideoTemplateDefini
 }
 
 function getSupportedRenderMimeType(): string {
-  const candidates = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  const candidates = ["video/webm;codecs=vp8", "video/webm", "video/webm;codecs=vp9"];
 
   const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
   if (!mimeType) {
@@ -115,12 +211,52 @@ function getSupportedRenderMimeType(): string {
 }
 
 function getOutputSize(sourceWidth: number, sourceHeight: number): { width: number; height: number } {
-  const longestSide = Math.max(sourceWidth, sourceHeight);
-  const scale = longestSide > 960 ? 960 / longestSide : 1;
+  const portraitHeight = Math.max(sourceWidth, sourceHeight);
+  const targetHeight = Math.min(960, Math.max(720, Math.round(portraitHeight)));
+  const evenHeight = targetHeight % 2 === 0 ? targetHeight : targetHeight - 1;
+  const targetWidth = Math.round((evenHeight * 9) / 16);
+  const evenWidth = targetWidth % 2 === 0 ? targetWidth : targetWidth - 1;
+  return {
+    width: evenWidth,
+    height: evenHeight
+  };
+}
+
+function getCropRect(params: {
+  video: HTMLVideoElement;
+  canvasWidth: number;
+  canvasHeight: number;
+  focusX: number;
+  focusY: number;
+  zoom: number;
+}) {
+  const { video, canvasWidth, canvasHeight, focusX, focusY, zoom } = params;
+  const sourceWidth = video.videoWidth || canvasWidth;
+  const sourceHeight = video.videoHeight || canvasHeight;
+  const targetAspect = 9 / 16;
+  const sourceAspect = sourceWidth / sourceHeight;
+
+  let cropWidth = sourceWidth / zoom;
+  let cropHeight = sourceHeight / zoom;
+
+  if (sourceAspect > targetAspect) {
+    cropHeight = sourceHeight / zoom;
+    cropWidth = cropHeight * targetAspect;
+  } else {
+    cropWidth = sourceWidth / zoom;
+    cropHeight = cropWidth / targetAspect;
+  }
+
+  const cropX = clamp(sourceWidth * focusX - cropWidth / 2, 0, sourceWidth - cropWidth);
+  const cropY = clamp(sourceHeight * focusY - cropHeight / 2, 0, sourceHeight - cropHeight);
 
   return {
-    width: Math.max(360, Math.round(sourceWidth * scale)),
-    height: Math.max(360, Math.round(sourceHeight * scale))
+    sourceWidth,
+    sourceHeight,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight
   };
 }
 
@@ -145,6 +281,169 @@ function drawRoundedRect(
   context.lineTo(x, y + safeRadius);
   context.quadraticCurveTo(x, y, x + safeRadius, y);
   context.closePath();
+}
+
+function drawPerspectiveGrid(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strength: number;
+}) {
+  const { context, canvasWidth, canvasHeight, strength } = params;
+  if (strength <= 0.01) {
+    return;
+  }
+
+  const horizonY = canvasHeight * 0.58;
+  context.save();
+  context.globalAlpha = clamp(0.12 + strength * 0.22, 0, 0.34);
+  context.strokeStyle = "rgba(255, 201, 110, 0.78)";
+  context.lineWidth = 1.2;
+
+  for (let line = 0; line < 7; line += 1) {
+    const t = line / 6;
+    const y = lerp(canvasHeight * 0.8, horizonY, t * t);
+    context.beginPath();
+    context.moveTo(canvasWidth * 0.12, y);
+    context.lineTo(canvasWidth * 0.88, y);
+    context.stroke();
+  }
+
+  for (let line = 0; line < 8; line += 1) {
+    const t = line / 7;
+    const x = lerp(canvasWidth * 0.14, canvasWidth * 0.86, t);
+    context.beginPath();
+    context.moveTo(x, canvasHeight);
+    context.lineTo(canvasWidth * 0.5, horizonY);
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function drawPowerPulse(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strength: number;
+}) {
+  const { context, canvasWidth, canvasHeight, strength } = params;
+  if (strength <= 0.01) {
+    return;
+  }
+
+  const cx = canvasWidth * 0.5;
+  const cy = canvasHeight * 0.72;
+  const radius = canvasWidth * (0.12 + strength * 0.18);
+
+  context.save();
+  context.globalAlpha = clamp(strength * 0.72, 0, 0.72);
+  context.beginPath();
+  context.arc(cx, cy, radius, 0, Math.PI * 2);
+  context.fillStyle = "rgba(255, 188, 92, 0.18)";
+  context.fill();
+
+  context.lineWidth = 8;
+  context.strokeStyle = `rgba(255, 212, 130, ${0.36 + strength * 0.34})`;
+  context.stroke();
+  context.restore();
+}
+
+function drawArenaSpotlight(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strength: number;
+}) {
+  const { context, canvasWidth, canvasHeight, strength } = params;
+  const gradient = context.createRadialGradient(
+    canvasWidth * 0.5,
+    canvasHeight * 0.36,
+    canvasWidth * 0.06,
+    canvasWidth * 0.5,
+    canvasHeight * 0.5,
+    canvasWidth * 0.78
+  );
+  gradient.addColorStop(0, `rgba(255, 248, 221, ${0.12 + strength * 0.18})`);
+  gradient.addColorStop(0.5, "rgba(255, 248, 221, 0.04)");
+  gradient.addColorStop(1, "rgba(5, 7, 9, 0.46)");
+  context.save();
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvasWidth, canvasHeight);
+  context.restore();
+}
+
+function drawBroadcastLowerThird(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  completedRepCount: number;
+}) {
+  const { context, canvasWidth, canvasHeight, completedRepCount } = params;
+  const width = Math.min(canvasWidth * 0.5, 320);
+  const height = 86;
+  const x = 22;
+  const y = canvasHeight - height - 20;
+
+  drawRoundedRect(context, x, y, width, height, 22);
+  context.fillStyle = "rgba(10, 12, 15, 0.72)";
+  context.fill();
+  context.strokeStyle = "rgba(124, 208, 255, 0.32)";
+  context.lineWidth = 1.5;
+  context.stroke();
+
+  context.fillStyle = "rgba(124, 208, 255, 0.95)";
+  context.font = "800 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("ARENA LIFT", x + 18, y + 28);
+
+  context.fillStyle = "#f4f4ef";
+  context.font = "700 18px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("SQUAT SET", x + 18, y + 54);
+
+  context.fillStyle = "#d2ff72";
+  context.font = "800 26px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(`${completedRepCount} reps`, x + 18, y + 78);
+}
+
+function drawDiagonalAccent(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+}) {
+  const { context, canvasWidth, canvasHeight } = params;
+  context.save();
+  context.globalAlpha = 0.22;
+  context.fillStyle = "rgba(140, 217, 255, 0.3)";
+  context.beginPath();
+  context.moveTo(canvasWidth * 0.68, 0);
+  context.lineTo(canvasWidth, 0);
+  context.lineTo(canvasWidth, canvasHeight * 0.28);
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function drawSweepFlare(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strength: number;
+}) {
+  const { context, canvasWidth, canvasHeight, strength } = params;
+  if (strength <= 0.01) {
+    return;
+  }
+
+  context.save();
+  context.globalAlpha = clamp(strength * 0.58, 0, 0.58);
+  const gradient = context.createLinearGradient(0, canvasHeight * 0.25, canvasWidth, canvasHeight * 0.62);
+  gradient.addColorStop(0, "rgba(255,255,255,0)");
+  gradient.addColorStop(0.45, "rgba(255,255,255,0.26)");
+  gradient.addColorStop(0.55, "rgba(124,208,255,0.56)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, canvasHeight * 0.22, canvasWidth, canvasHeight * 0.44);
+  context.restore();
 }
 
 function createFaceDetector(): FaceDetectorLike | null {
@@ -172,25 +471,37 @@ function drawBaseVideoFrame(params: {
   zoom: number;
 }) {
   const { context, video, canvasWidth, canvasHeight, focusX, focusY, zoom } = params;
-  const sourceWidth = video.videoWidth || canvasWidth;
-  const sourceHeight = video.videoHeight || canvasHeight;
-  const cropWidth = sourceWidth / zoom;
-  const cropHeight = sourceHeight / zoom;
-  const cropX = clamp(sourceWidth * focusX - cropWidth / 2, 0, sourceWidth - cropWidth);
-  const cropY = clamp(sourceHeight * focusY - cropHeight / 2, 0, sourceHeight - cropHeight);
+  const crop = getCropRect({
+    video,
+    canvasWidth,
+    canvasHeight,
+    focusX,
+    focusY,
+    zoom
+  });
 
   context.clearRect(0, 0, canvasWidth, canvasHeight);
   context.filter = "contrast(1.18) saturate(1.18) brightness(1.05)";
-  context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, canvasWidth, canvasHeight);
+  context.drawImage(
+    video,
+    crop.cropX,
+    crop.cropY,
+    crop.cropWidth,
+    crop.cropHeight,
+    0,
+    0,
+    canvasWidth,
+    canvasHeight
+  );
 
   context.globalAlpha = 0.14;
   context.filter = "contrast(1.32) saturate(1.08)";
   context.drawImage(
     video,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight,
+    crop.cropX,
+    crop.cropY,
+    crop.cropWidth,
+    crop.cropHeight,
     -canvasWidth * 0.01,
     -canvasHeight * 0.01,
     canvasWidth * 1.02,
@@ -218,6 +529,8 @@ function drawBaseVideoFrame(params: {
   topGlow.addColorStop(1, "rgba(210, 255, 114, 0)");
   context.fillStyle = topGlow;
   context.fillRect(0, 0, canvasWidth, canvasHeight * 0.45);
+
+  return crop;
 }
 
 function drawCornerBadge(params: {
@@ -307,6 +620,385 @@ function drawRepScoreboard(params: {
   context.fillText(String(totalReps), x + 22, y + 70);
 }
 
+function drawStatusPill(params: {
+  context: CanvasRenderingContext2D;
+  x: number;
+  y: number;
+  width: number;
+  label: string;
+  accent?: string;
+  align?: "left" | "right";
+}) {
+  const { context, x, y, width, label, accent = "#ef4d65", align = "left" } = params;
+  drawRoundedRect(context, x, y, width, 42, 20);
+  context.fillStyle = "rgba(12, 15, 19, 0.82)";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.fillStyle = accent;
+  context.beginPath();
+  context.arc(x + 18, y + 21, 4, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "#f4f4ef";
+  context.font = "700 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.textAlign = params.align === "right" ? "right" : "left";
+  context.fillText(label, params.align === "right" ? x + width - 14 : x + 30, y + 26);
+  context.textAlign = "left";
+}
+
+function drawMetricChip(params: {
+  context: CanvasRenderingContext2D;
+  x: number;
+  y: number;
+  width: number;
+  label: string;
+  status: "ok" | "locked";
+}) {
+  const { context, x, y, width, label, status } = params;
+  drawRoundedRect(context, x, y, width, 40, 16);
+  context.fillStyle = "rgba(11, 16, 18, 0.84)";
+  context.fill();
+  context.strokeStyle =
+    status === "ok" ? "rgba(53, 231, 131, 0.35)" : "rgba(255, 214, 102, 0.18)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.fillStyle = status === "ok" ? "#49dc85" : "#e0c26e";
+  context.font = "700 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  const prefix = status === "ok" ? "✓" : "•";
+  context.fillText(`${prefix} ${label.toUpperCase()}`, x + 14, y + 25);
+}
+
+function drawPrimaryOverlay(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  completedRepCount: number;
+  titleText: string;
+  subjectName: string;
+}) {
+  const { context, canvasWidth, canvasHeight, completedRepCount, titleText, subjectName } = params;
+  drawStatusPill({
+    context,
+    x: 20,
+    y: 18,
+    width: 146,
+    label: "CULT PRIMARY",
+    accent: "#ef4d65"
+  });
+  drawStatusPill({
+    context,
+    x: canvasWidth - 144,
+    y: 18,
+    width: 124,
+    label: `${completedRepCount} reps 🔥`,
+    accent: "#f4f4ef",
+    align: "right"
+  });
+
+  const wash = context.createLinearGradient(0, canvasHeight * 0.54, 0, canvasHeight);
+  wash.addColorStop(0, "rgba(5, 8, 11, 0)");
+  wash.addColorStop(0.36, "rgba(5, 8, 11, 0.34)");
+  wash.addColorStop(1, "rgba(5, 8, 11, 0.92)");
+  context.fillStyle = wash;
+  context.fillRect(0, canvasHeight * 0.52, canvasWidth, canvasHeight * 0.48);
+
+  const chipY = canvasHeight * 0.69;
+  const chipWidth = Math.min(148, canvasWidth * 0.28);
+  const chipGap = 10;
+  const chipStartX = 20;
+  drawMetricChip({
+    context,
+    x: chipStartX,
+    y: chipY,
+    width: chipWidth,
+    label: "Auto Trim",
+    status: "ok"
+  });
+  drawMetricChip({
+    context,
+    x: chipStartX + chipWidth + chipGap,
+    y: chipY,
+    width: chipWidth,
+    label: "Last Rep Slow",
+    status: "ok"
+  });
+  drawMetricChip({
+    context,
+    x: chipStartX + (chipWidth + chipGap) * 2,
+    y: chipY,
+    width: chipWidth,
+    label: "Track On",
+    status: "ok"
+  });
+
+  const panelY = canvasHeight * 0.78;
+  context.fillStyle = "#f4f4ef";
+  context.font = "800 28px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(titleText, 24, panelY + 12);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.48)";
+  context.font = "300 28px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("done right.", 24, panelY + 44);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.78)";
+  context.font = "600 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(
+    `${subjectName} in a clean working-set cut. Final rep slows down before the lockout.`,
+    24,
+    panelY + 86
+  );
+
+  context.fillStyle = "rgba(244, 244, 239, 0.32)";
+  context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("Strength Bay • Today", 24, canvasHeight - 18);
+  context.textAlign = "right";
+  context.fillText("@cultvision", canvasWidth - 24, canvasHeight - 18);
+  context.textAlign = "left";
+}
+
+function drawCultEidosOverlay(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  completedRepCount: number;
+  titleText: string;
+  subjectName: string;
+}) {
+  const { context, canvasWidth, canvasHeight, completedRepCount, titleText, subjectName } = params;
+  drawStatusPill({
+    context,
+    x: 20,
+    y: 18,
+    width: 138,
+    label: "LIFT STORY",
+    accent: "#ef4d65"
+  });
+  drawStatusPill({
+    context,
+    x: canvasWidth - 132,
+    y: 18,
+    width: 112,
+    label: `${completedRepCount} reps 🔥`,
+    accent: "#f4f4ef",
+    align: "right"
+  });
+
+  const chipY = canvasHeight * 0.68;
+  const chipWidth = Math.min(148, canvasWidth * 0.28);
+  const chipGap = 10;
+  const chipStartX = 20;
+  drawMetricChip({
+    context,
+    x: chipStartX,
+    y: chipY,
+    width: chipWidth,
+    label: "Back Flat",
+    status: "ok"
+  });
+  drawMetricChip({
+    context,
+    x: chipStartX + chipWidth + chipGap,
+    y: chipY,
+    width: chipWidth,
+    label: "Hip Hinge",
+    status: "locked"
+  });
+  drawMetricChip({
+    context,
+    x: chipStartX + (chipWidth + chipGap) * 2,
+    y: chipY,
+    width: chipWidth,
+    label: "Lock Out",
+    status: "locked"
+  });
+
+  const panelY = canvasHeight * 0.77;
+  const fade = context.createLinearGradient(0, panelY - 80, 0, canvasHeight);
+  fade.addColorStop(0, "rgba(4, 7, 11, 0)");
+  fade.addColorStop(0.35, "rgba(4, 7, 11, 0.46)");
+  fade.addColorStop(1, "rgba(4, 7, 11, 0.88)");
+  context.fillStyle = fade;
+  context.fillRect(0, panelY - 80, canvasWidth, canvasHeight - (panelY - 80));
+
+  context.fillStyle = "#f4f4ef";
+  context.font = "800 30px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(titleText, 24, panelY + 18);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.5)";
+  context.font = "300 28px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("done clean.", 24, panelY + 50);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.76)";
+  context.font = "600 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(
+    `${subjectName} is holding a clean pattern. Keep the movement sharp and repeatable.`,
+    24,
+    panelY + 94
+  );
+
+  context.fillStyle = "rgba(244, 244, 239, 0.32)";
+  context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("Cult Vision • Today", 24, canvasHeight - 18);
+  context.textAlign = "right";
+  context.fillText("@cultfit", canvasWidth - 24, canvasHeight - 18);
+  context.textAlign = "left";
+}
+
+function drawSoftBorder(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strokeStyle: string;
+}) {
+  const { context, canvasWidth, canvasHeight, strokeStyle } = params;
+  drawRoundedRect(context, 14, 14, canvasWidth - 28, canvasHeight - 28, 24);
+  context.strokeStyle = strokeStyle;
+  context.lineWidth = 1.5;
+  context.stroke();
+}
+
+function drawEditorialFooter(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  label: string;
+  title: string;
+  subtitle: string;
+  body: string;
+  accentColor: string;
+}) {
+  const { context, canvasWidth, canvasHeight, label, title, subtitle, body, accentColor } = params;
+  const cardX = 22;
+  const cardWidth = canvasWidth - 44;
+  const cardHeight = 152;
+  const cardY = canvasHeight - cardHeight - 22;
+
+  drawRoundedRect(context, cardX, cardY, cardWidth, cardHeight, 26);
+  context.fillStyle = "rgba(8, 11, 15, 0.78)";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.fillStyle = accentColor;
+  context.fillRect(cardX + 18, cardY + 20, 4, 46);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.58)";
+  context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(label.toUpperCase(), cardX + 32, cardY + 28);
+
+  context.fillStyle = "#f4f4ef";
+  context.font = "800 28px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(title, cardX + 32, cardY + 60);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.46)";
+  context.font = "300 26px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(subtitle, cardX + 32, cardY + 92);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.72)";
+  context.font = "600 14px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(body, cardX + 32, cardY + 124);
+}
+
+function drawTopRightCount(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  label: string;
+  accentColor: string;
+}) {
+  const { context, canvasWidth, label, accentColor } = params;
+  drawRoundedRect(context, canvasWidth - 140, 18, 118, 42, 20);
+  context.fillStyle = "rgba(12, 15, 19, 0.82)";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  context.lineWidth = 1.2;
+  context.stroke();
+  context.fillStyle = accentColor;
+  context.font = "800 15px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.textAlign = "center";
+  context.fillText(label, canvasWidth - 81, 45);
+  context.textAlign = "left";
+}
+
+function drawSideStatRail(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  totalReps: number;
+  titleText: string;
+  subjectName: string;
+}) {
+  const { context, canvasWidth, canvasHeight, totalReps, titleText, subjectName } = params;
+  const railWidth = Math.min(164, canvasWidth * 0.3);
+  const railX = canvasWidth - railWidth - 20;
+  const railY = 70;
+  const railHeight = canvasHeight - 160;
+
+  drawRoundedRect(context, railX, railY, railWidth, railHeight, 26);
+  context.fillStyle = "rgba(7, 12, 18, 0.68)";
+  context.fill();
+  context.strokeStyle = "rgba(112, 179, 255, 0.22)";
+  context.lineWidth = 1.2;
+  context.stroke();
+
+  context.fillStyle = "rgba(112, 179, 255, 0.9)";
+  context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText("COACH SLATE", railX + 18, railY + 28);
+
+  context.fillStyle = "#f4f4ef";
+  context.font = "800 40px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(String(totalReps), railX + 18, railY + 78);
+  context.font = "700 13px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillStyle = "rgba(244, 244, 239, 0.6)";
+  context.fillText("completed reps", railX + 18, railY + 100);
+
+  context.fillStyle = "rgba(244, 244, 239, 0.84)";
+  context.font = "700 15px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(titleText, railX + 18, railY + 150);
+  context.fillStyle = "rgba(244, 244, 239, 0.56)";
+  context.font = "600 13px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.fillText(subjectName, railX + 18, railY + 174);
+
+  ["Tempo steady", "Setup composed", "Frame locked"].forEach((item, index) => {
+    const y = railY + 220 + index * 44;
+    drawRoundedRect(context, railX + 14, y, railWidth - 28, 32, 14);
+    context.fillStyle = "rgba(255, 255, 255, 0.04)";
+    context.fill();
+    context.fillStyle = index === 1 ? "rgba(255, 219, 127, 0.86)" : "rgba(118, 228, 176, 0.9)";
+    context.font = "700 12px 'Avenir Next', 'Segoe UI', sans-serif";
+    context.fillText(item, railX + 26, y + 21);
+  });
+}
+
+function drawRepAccentBubble(params: {
+  context: CanvasRenderingContext2D;
+  canvasWidth: number;
+  canvasHeight: number;
+  strength: number;
+}) {
+  const { context, canvasWidth, canvasHeight, strength } = params;
+  if (strength <= 0.01) {
+    return;
+  }
+
+  const width = 92 + strength * 18;
+  const height = 46 + strength * 6;
+  const x = canvasWidth - width - 24;
+  const y = canvasHeight * 0.22 - strength * 10;
+  drawRoundedRect(context, x, y, width, height, 22);
+  context.fillStyle = `rgba(210, 255, 114, ${0.9 * strength})`;
+  context.fill();
+  context.fillStyle = "#111315";
+  context.font = "800 20px 'Avenir Next', 'Segoe UI', sans-serif";
+  context.textAlign = "center";
+  context.fillText("+1", x + width / 2, y + 30);
+  context.textAlign = "left";
+}
+
 function drawFrameForTemplate(params: {
   templateId: VideoTemplateId;
   context: CanvasRenderingContext2D;
@@ -318,37 +1010,225 @@ function drawFrameForTemplate(params: {
   zoom: number;
   activeRepBubbleStrength: number;
   completedRepCount: number;
+  titleText: string;
+  subjectName: string;
 }) {
-  drawBaseVideoFrame(params);
+  const crop = drawBaseVideoFrame(params);
 
-  if (params.templateId === "rep-bingo") {
-    drawCornerBadge({
-      context: params.context,
-      canvasWidth: params.canvasWidth,
-      label: "REP BINGO",
-      subtitle: "Synced rep pops"
-    });
-    drawRepBubble({
+  if (params.templateId === "cult-eidos") {
+    params.context.save();
+    params.context.globalAlpha = 0.08;
+    params.context.filter = "contrast(1.15) saturate(0.85) blur(2px)";
+    params.context.drawImage(
+      params.video,
+      crop.cropX,
+      crop.cropY,
+      crop.cropWidth,
+      crop.cropHeight,
+      0,
+      0,
+      params.canvasWidth,
+      params.canvasHeight
+    );
+    params.context.restore();
+
+    const glaze = params.context.createLinearGradient(0, 0, 0, params.canvasHeight);
+    glaze.addColorStop(0, "rgba(6, 9, 12, 0.18)");
+    glaze.addColorStop(0.55, "rgba(6, 9, 12, 0.04)");
+    glaze.addColorStop(1, "rgba(3, 5, 8, 0.56)");
+    params.context.fillStyle = glaze;
+    params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
+
+    drawCultEidosOverlay({
       context: params.context,
       canvasWidth: params.canvasWidth,
       canvasHeight: params.canvasHeight,
-      strength: params.activeRepBubbleStrength,
-      bubbleText: "+1"
-    });
-    drawRepScoreboard({
-      context: params.context,
-      canvasWidth: params.canvasWidth,
-      canvasHeight: params.canvasHeight,
-      totalReps: params.completedRepCount
+      completedRepCount: params.completedRepCount,
+      titleText: params.titleText,
+      subjectName: params.subjectName
     });
     return;
   }
 
-  drawCornerBadge({
+  if (params.templateId === "primary") {
+    const cleanWash = params.context.createLinearGradient(0, 0, 0, params.canvasHeight);
+    cleanWash.addColorStop(0, "rgba(210, 255, 114, 0.08)");
+    cleanWash.addColorStop(0.52, "rgba(8, 10, 12, 0.08)");
+    cleanWash.addColorStop(1, "rgba(5, 8, 11, 0.28)");
+    params.context.fillStyle = cleanWash;
+    params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
+    drawSoftBorder({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      strokeStyle: "rgba(210, 255, 114, 0.18)"
+    });
+    drawPrimaryOverlay({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      completedRepCount: params.completedRepCount,
+      titleText: params.titleText,
+      subjectName: params.subjectName
+    });
+    return;
+  }
+
+  if (params.templateId === "depth-drive") {
+    const warmWash = params.context.createLinearGradient(
+      0,
+      0,
+      0,
+      params.canvasHeight
+    );
+    warmWash.addColorStop(0, "rgba(91, 58, 24, 0.18)");
+    warmWash.addColorStop(1, "rgba(10, 8, 7, 0.42)");
+    params.context.fillStyle = warmWash;
+    params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
+    drawSoftBorder({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      strokeStyle: "rgba(255, 198, 132, 0.24)"
+    });
+    drawTopRightCount({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      label: `${params.completedRepCount} reps`,
+      accentColor: "#ffc684"
+    });
+    drawEditorialFooter({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      label: "Amber Frame",
+      title: params.titleText,
+      subtitle: "warmed up.",
+      body: `${params.subjectName} in a softer cinematic cut with a warm strength finish.`,
+      accentColor: "#ffc684"
+    });
+    return;
+  }
+
+  if (params.templateId === "iron-echo") {
+    params.context.save();
+    params.context.filter = "grayscale(1) contrast(1.36) brightness(0.96)";
+    params.context.drawImage(
+      params.video,
+      crop.cropX,
+      crop.cropY,
+      crop.cropWidth,
+      crop.cropHeight,
+      0,
+      0,
+      params.canvasWidth,
+      params.canvasHeight
+    );
+    params.context.restore();
+
+    drawSoftBorder({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      strokeStyle: "rgba(244, 244, 239, 0.22)"
+    });
+    drawEditorialFooter({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      label: "Noir Motion",
+      title: params.titleText,
+      subtitle: "in monochrome.",
+      body: `${params.subjectName} in a cleaner black-and-white studio treatment.`,
+      accentColor: "#f4f4ef"
+    });
+    return;
+  }
+
+  if (params.templateId === "arena-lift") {
+    const coolWash = params.context.createLinearGradient(
+      0,
+      0,
+      params.canvasWidth,
+      params.canvasHeight
+    );
+    coolWash.addColorStop(0, "rgba(45, 87, 138, 0.08)");
+    coolWash.addColorStop(1, "rgba(7, 12, 18, 0.38)");
+    params.context.fillStyle = coolWash;
+    params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
+    drawSideStatRail({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      totalReps: params.completedRepCount,
+      titleText: params.titleText,
+      subjectName: params.subjectName
+    });
+    drawEditorialFooter({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      label: "Coach Slate",
+      title: params.titleText,
+      subtitle: "performance ready.",
+      body: "A cleaner coaching layout with stats that sit beside the action, not over it.",
+      accentColor: "#7bb6ff"
+    });
+    return;
+  }
+
+  if (params.templateId === "rep-bingo") {
+    drawTopRightCount({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      label: `${params.completedRepCount} reps`,
+      accentColor: "#d2ff72"
+    });
+    drawRepAccentBubble({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      strength: params.activeRepBubbleStrength
+    });
+    drawEditorialFooter({
+      context: params.context,
+      canvasWidth: params.canvasWidth,
+      canvasHeight: params.canvasHeight,
+      label: "Rep Marks",
+      title: params.titleText,
+      subtitle: "rep accents synced.",
+      body: "Minimal cues, subtle rep pops, and a cleaner performance finish.",
+      accentColor: "#d2ff72"
+    });
+    return;
+  }
+
+  const cleanWash = params.context.createLinearGradient(0, 0, 0, params.canvasHeight);
+  cleanWash.addColorStop(0, "rgba(210, 255, 114, 0.08)");
+  cleanWash.addColorStop(1, "rgba(8, 10, 12, 0.34)");
+  params.context.fillStyle = cleanWash;
+  params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
+  drawSoftBorder({
     context: params.context,
     canvasWidth: params.canvasWidth,
-    label: "GYM HIGHLIGHT",
-    subtitle: "Punchy edit applied"
+    canvasHeight: params.canvasHeight,
+    strokeStyle: "rgba(210, 255, 114, 0.18)"
+  });
+  drawTopRightCount({
+    context: params.context,
+    canvasWidth: params.canvasWidth,
+    label: `${params.completedRepCount} reps`,
+    accentColor: "#d2ff72"
+  });
+  drawEditorialFooter({
+    context: params.context,
+    canvasWidth: params.canvasWidth,
+    canvasHeight: params.canvasHeight,
+    label: "Clean Strength",
+    title: params.titleText,
+    subtitle: "captured clean.",
+    body: `${params.subjectName} in a minimal export with sharper framing and softer overlays.`,
+    accentColor: "#d2ff72"
   });
 }
 
@@ -360,10 +1240,14 @@ function buildRepMoments(params: {
   const repEvents = params.repEvents ?? [];
 
   if (repEvents.length > 0) {
-    return repEvents
+    const exactMoments = repEvents
       .map((event) => event.timestampMs / 1000)
       .filter((timeSec) => timeSec >= 0 && timeSec <= params.sourceDurationSec + 0.1)
       .sort((left, right) => left - right);
+
+    if (exactMoments.length > 0) {
+      return exactMoments;
+    }
   }
 
   const repCount = params.repCount ?? 0;
@@ -379,6 +1263,63 @@ function buildRepMoments(params: {
   return Array.from({ length: repCount }, (_, index) =>
     clamp(leadIn + interval * (index + 0.72), 0.3, params.sourceDurationSec)
   );
+}
+
+function getTemplateBaseZoom(templateId: VideoTemplateId): number {
+  switch (templateId) {
+    case "primary":
+      return 1.06;
+    case "cult-eidos":
+      return 1.06;
+    case "gym-highlight":
+      return 1.08;
+    case "depth-drive":
+      return 1.12;
+    case "iron-echo":
+      return 1.16;
+    case "arena-lift":
+      return 1.1;
+    default:
+      return 1.04;
+  }
+}
+
+function getTemplateFaceZoom(templateId: VideoTemplateId): number {
+  switch (templateId) {
+    case "primary":
+      return 1.12;
+    case "cult-eidos":
+      return 1.1;
+    case "gym-highlight":
+      return 1.22;
+    case "depth-drive":
+      return 1.16;
+    case "iron-echo":
+      return 1.24;
+    case "arena-lift":
+      return 1.18;
+    default:
+      return 1.1;
+  }
+}
+
+function getTemplateFallbackZoom(templateId: VideoTemplateId): number {
+  switch (templateId) {
+    case "primary":
+      return 1.08;
+    case "cult-eidos":
+      return 1.08;
+    case "gym-highlight":
+      return 1.1;
+    case "depth-drive":
+      return 1.14;
+    case "iron-echo":
+      return 1.2;
+    case "arena-lift":
+      return 1.12;
+    default:
+      return 1.05;
+  }
 }
 
 function scheduleRepChime(
@@ -421,12 +1362,79 @@ export function getVideoTemplates(): VideoTemplateDefinition[] {
   return TEMPLATE_DEFINITIONS;
 }
 
+function getTemplateRenderWindow(params: {
+  templateId: VideoTemplateId;
+  durationSec: number;
+  repMomentsSec: number[];
+}) {
+  const { templateId, durationSec, repMomentsSec } = params;
+
+  if (templateId !== "primary" || repMomentsSec.length === 0 || durationSec <= 0) {
+    return {
+      startSec: 0,
+      endSec: durationSec,
+      durationSec: Math.max(durationSec, 0)
+    };
+  }
+
+  const firstRepSec = repMomentsSec[0];
+  const lastRepSec = repMomentsSec[repMomentsSec.length - 1];
+  const startSec = clamp(firstRepSec - 1, 0, durationSec);
+  const endSec = clamp(lastRepSec + 1, startSec + 0.2, durationSec);
+
+  return {
+    startSec,
+    endSec,
+    durationSec: Math.max(0.2, endSec - startSec)
+  };
+}
+
+function getPrimarySlowMotionWindow(params: {
+  templateId: VideoTemplateId;
+  repMomentsSec: number[];
+  renderWindow: { startSec: number; endSec: number };
+  durationSec: number;
+}) {
+  const { templateId, repMomentsSec, renderWindow, durationSec } = params;
+
+  if (templateId !== "primary" || repMomentsSec.length === 0 || durationSec <= 0) {
+    return null;
+  }
+
+  const lastRepSec = repMomentsSec[repMomentsSec.length - 1];
+  const previousRepSec =
+    repMomentsSec.length > 1 ? repMomentsSec[repMomentsSec.length - 2] : null;
+  const inferredRepDurationSec = clamp(
+    previousRepSec !== null ? lastRepSec - previousRepSec : renderWindow.endSec - renderWindow.startSec,
+    1.1,
+    3.1
+  );
+  const slowStartSec = clamp(
+    lastRepSec - inferredRepDurationSec * 0.86,
+    renderWindow.startSec,
+    renderWindow.endSec
+  );
+  const slowEndSec = clamp(
+    lastRepSec + Math.max(0.16, inferredRepDurationSec * 0.16),
+    slowStartSec + 0.28,
+    renderWindow.endSec
+  );
+
+  return {
+    startSec: slowStartSec,
+    endSec: slowEndSec,
+    playbackRate: 0.42
+  };
+}
+
 export async function renderVideoTemplate(params: {
   sourceUrl: string;
   templateId: VideoTemplateId;
   repEvents?: RecordingRepEvent[];
   repCount?: number;
   durationSec?: number;
+  titleText?: string;
+  subjectName?: string;
   onProgress?: (progress: TemplateRenderProgress) => void;
 }): Promise<TemplateRenderResult> {
   if (typeof document === "undefined" || typeof MediaRecorder === "undefined") {
@@ -436,7 +1444,7 @@ export async function renderVideoTemplate(params: {
   const template = getTemplateDefinition(params.templateId);
   const mimeType = getSupportedRenderMimeType();
   const sourceVideo = createHiddenVideo(params.sourceUrl);
-  const faceDetector = createFaceDetector();
+  const faceDetector = params.templateId === "gym-highlight" ? createFaceDetector() : null;
 
   await waitForEvent(sourceVideo, "loadedmetadata");
 
@@ -448,6 +1456,17 @@ export async function renderVideoTemplate(params: {
     repEvents: params.repEvents,
     repCount: params.repCount,
     sourceDurationSec: durationSec
+  });
+  const renderWindow = getTemplateRenderWindow({
+    templateId: params.templateId,
+    durationSec,
+    repMomentsSec
+  });
+  const slowMotionWindow = getPrimarySlowMotionWindow({
+    templateId: params.templateId,
+    repMomentsSec,
+    renderWindow,
+    durationSec
   });
 
   if (template.requiresRepTiming && repMomentsSec.length === 0) {
@@ -464,38 +1483,84 @@ export async function renderVideoTemplate(params: {
     throw new Error("Could not create the video template canvas.");
   }
 
-  const canvasStream = canvas.captureStream(30);
-  const audioContext = new AudioContext();
-  const audioDestination = audioContext.createMediaStreamDestination();
-  const combinedStream = new MediaStream([
-    ...canvasStream.getVideoTracks(),
-    ...audioDestination.stream.getAudioTracks()
-  ]);
-  const recorder = new MediaRecorder(combinedStream, { mimeType });
+  const canvasStream = canvas.captureStream(24);
+  const needsAudioTrack = params.templateId === "rep-bingo" || params.templateId === "primary";
+  const audioContext = needsAudioTrack ? new AudioContext() : null;
+  const loadPrimaryTrackBuffer =
+    audioContext && params.templateId === "primary"
+      ? createAudioBufferLoader(audioContext, primaryTemplateTrackUrl)
+      : null;
+  const audioDestination = audioContext?.createMediaStreamDestination() ?? null;
+  const outputStream =
+    audioDestination !== null
+      ? new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...audioDestination.stream.getAudioTracks()
+        ])
+      : canvasStream;
+  const recorder = new MediaRecorder(outputStream, { mimeType });
   const chunks: BlobPart[] = [];
   let animationFrameId: number | null = null;
   let detectionInFlight = false;
   let lastDetectionAt = 0;
   let targetFocusX = 0.5;
   let targetFocusY = 0.38;
-  let targetZoom = params.templateId === "gym-highlight" ? 1.08 : 1.04;
+  let targetZoom = getTemplateBaseZoom(params.templateId);
   let focusX = 0.5;
   let focusY = 0.38;
   let zoom = targetZoom;
   let nextRepMomentIndex = 0;
   let completedRepCount = 0;
   let lastRepTriggerTimeSec = -99;
+  let didFinalize = false;
+  let activePrimaryTrackSource: AudioBufferSourceNode | null = null;
+  let primaryTrackBuffer: AudioBuffer | null = null;
+  const titleText = params.titleText ?? "Strength Session";
+  const subjectName = params.subjectName ?? "Cult Vision";
 
   const cleanup = () => {
     if (animationFrameId !== null) {
       window.cancelAnimationFrame(animationFrameId);
     }
 
-    combinedStream.getTracks().forEach((track) => track.stop());
+    outputStream.getTracks().forEach((track) => track.stop());
     canvasStream.getTracks().forEach((track) => track.stop());
     sourceVideo.pause();
     sourceVideo.src = "";
-    void audioContext.close();
+    if (activePrimaryTrackSource) {
+      try {
+        activePrimaryTrackSource.stop();
+      } catch {
+        // Ignore cleanup issues for already-ended nodes.
+      }
+      activePrimaryTrackSource.disconnect();
+      activePrimaryTrackSource = null;
+    }
+    if (audioContext) {
+      void audioContext.close();
+    }
+  };
+
+  const finalizeRender = () => {
+    if (didFinalize) {
+      return;
+    }
+
+    didFinalize = true;
+    if (animationFrameId !== null) {
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+
+    params.onProgress?.({
+      progress: 0.99,
+      message: "Wrapping up the edited export..."
+    });
+
+    sourceVideo.pause();
+    if (recorder.state !== "inactive") {
+      recorder.stop();
+    }
   };
 
   const maybeDetectFace = () => {
@@ -504,7 +1569,7 @@ export async function renderVideoTemplate(params: {
     }
 
     const now = performance.now();
-    if (now - lastDetectionAt < 260) {
+    if (now - lastDetectionAt < 420) {
       return;
     }
 
@@ -517,8 +1582,8 @@ export async function renderVideoTemplate(params: {
         const firstFace = faces[0]?.boundingBox;
         if (!firstFace || sourceVideo.videoWidth === 0 || sourceVideo.videoHeight === 0) {
           targetFocusX = 0.5;
-          targetFocusY = 0.4;
-          targetZoom = params.templateId === "gym-highlight" ? 1.1 : 1.05;
+          targetFocusY = params.templateId === "depth-drive" ? 0.48 : 0.4;
+          targetZoom = getTemplateFallbackZoom(params.templateId);
           return;
         }
 
@@ -529,15 +1594,15 @@ export async function renderVideoTemplate(params: {
         );
         targetFocusY = clamp(
           (firstFace.y + firstFace.height * 1.4) / sourceVideo.videoHeight,
-          0.2,
-          0.7
+          params.templateId === "depth-drive" ? 0.28 : 0.2,
+          params.templateId === "depth-drive" ? 0.78 : 0.7
         );
-        targetZoom = params.templateId === "gym-highlight" ? 1.22 : 1.1;
+        targetZoom = getTemplateFaceZoom(params.templateId);
       })
       .catch(() => {
         targetFocusX = 0.5;
-        targetFocusY = 0.4;
-        targetZoom = params.templateId === "gym-highlight" ? 1.1 : 1.05;
+        targetFocusY = params.templateId === "depth-drive" ? 0.48 : 0.4;
+        targetZoom = getTemplateFallbackZoom(params.templateId);
       })
       .finally(() => {
         detectionInFlight = false;
@@ -565,21 +1630,41 @@ export async function renderVideoTemplate(params: {
   });
 
   const renderLoop = () => {
+    if (didFinalize) {
+      return;
+    }
+
     maybeDetectFace();
     focusX += (targetFocusX - focusX) * 0.12;
     focusY += (targetFocusY - focusY) * 0.12;
     zoom += (targetZoom - zoom) * 0.08;
 
+    const renderCurrentTimeSec = clamp(
+      sourceVideo.currentTime,
+      renderWindow.startSec,
+      renderWindow.endSec
+    );
+    const activePlaybackRate =
+      slowMotionWindow &&
+      renderCurrentTimeSec >= slowMotionWindow.startSec &&
+      renderCurrentTimeSec <= slowMotionWindow.endSec
+        ? slowMotionWindow.playbackRate
+        : 1;
+
+    if (Math.abs(sourceVideo.playbackRate - activePlaybackRate) > 0.01) {
+      sourceVideo.playbackRate = activePlaybackRate;
+    }
+
     while (
       nextRepMomentIndex < repMomentsSec.length &&
-      sourceVideo.currentTime >= repMomentsSec[nextRepMomentIndex]
+      renderCurrentTimeSec >= repMomentsSec[nextRepMomentIndex]
     ) {
       lastRepTriggerTimeSec = repMomentsSec[nextRepMomentIndex];
       completedRepCount = nextRepMomentIndex + 1;
       nextRepMomentIndex += 1;
     }
 
-    const bubbleAgeSec = sourceVideo.currentTime - lastRepTriggerTimeSec;
+    const bubbleAgeSec = renderCurrentTimeSec - lastRepTriggerTimeSec;
     const activeRepBubbleStrength =
       params.templateId === "rep-bingo" && bubbleAgeSec >= 0 && bubbleAgeSec <= 0.62
         ? 1 - bubbleAgeSec / 0.62
@@ -595,89 +1680,158 @@ export async function renderVideoTemplate(params: {
       focusY,
       zoom,
       activeRepBubbleStrength,
-      completedRepCount
+      completedRepCount,
+      titleText,
+      subjectName
     });
 
     const progressRatio =
-      durationSec > 0 ? clamp(sourceVideo.currentTime / durationSec, 0, 0.98) : 0.4;
+      renderWindow.durationSec > 0
+        ? clamp((renderCurrentTimeSec - renderWindow.startSec) / renderWindow.durationSec, 0, 0.98)
+        : 0.4;
     params.onProgress?.({
       progress: progressRatio,
-      message:
-        params.templateId === "rep-bingo"
-          ? progressRatio < 0.22
-            ? "Lining up rep timing and overlay..."
+      message: (() => {
+        if (params.templateId === "primary") {
+          return progressRatio < 0.22
+            ? "Finding the working set window..."
             : progressRatio < 0.84
-              ? "Rendering synced +1 pops and bingo sound..."
-              : "Finalizing your rep edit..."
-          : progressRatio < 0.18
-            ? "Applying the gym color grade..."
-            : progressRatio < 0.82
-              ? "Rendering zoom and sharpen look..."
-              : "Finalizing your edited video..."
+              ? "Rendering the hero cut, soundtrack, and last-rep slow motion..."
+              : "Finishing the Primary export...";
+        }
+        if (params.templateId === "rep-bingo") {
+          return progressRatio < 0.22
+            ? "Lining up subtle rep accents..."
+            : progressRatio < 0.84
+              ? "Rendering soft rep cues and clean markers..."
+              : "Finalizing your rep-accent edit...";
+        }
+        if (params.templateId === "cult-eidos") {
+          return progressRatio < 0.22
+            ? "Building the story-led coaching frame..."
+            : progressRatio < 0.84
+              ? "Rendering the premium editorial overlay..."
+              : "Finishing the Lift Story cut...";
+        }
+        if (params.templateId === "depth-drive") {
+          return progressRatio < 0.22
+            ? "Building the warm cinematic grade..."
+            : progressRatio < 0.84
+              ? "Rendering the amber editorial finish..."
+              : "Locking in the final amber cut...";
+        }
+        if (params.templateId === "iron-echo") {
+          return progressRatio < 0.22
+            ? "Dialing in the noir contrast..."
+            : progressRatio < 0.84
+              ? "Rendering the monochrome studio pass..."
+              : "Finishing the noir motion pass...";
+        }
+        if (params.templateId === "arena-lift") {
+          return progressRatio < 0.22
+            ? "Setting up the coaching rail layout..."
+            : progressRatio < 0.84
+              ? "Rendering the stat rail and clean footer..."
+              : "Wrapping the coach slate edit...";
+        }
+        return progressRatio < 0.18
+          ? "Applying the clean premium grade..."
+          : progressRatio < 0.82
+            ? "Rendering the minimal clean-strength finish..."
+            : "Finalizing your edited video...";
+      })()
     });
+
+    if (renderCurrentTimeSec >= renderWindow.endSec - 1 / 30) {
+      finalizeRender();
+      return;
+    }
 
     if (!sourceVideo.paused && !sourceVideo.ended) {
       animationFrameId = window.requestAnimationFrame(renderLoop);
+      return;
     }
+
+    finalizeRender();
   };
 
   params.onProgress?.({
     progress: 0.04,
     message:
-      params.templateId === "rep-bingo"
-        ? "Preparing rep timing for the template..."
-        : "Preparing your recording for the template..."
+      params.templateId === "primary"
+        ? "Preparing the Primary template..."
+        : params.templateId === "rep-bingo"
+        ? "Preparing the rep-accent template..."
+        : params.templateId === "cult-eidos"
+          ? "Preparing the Lift Story template..."
+        : params.templateId === "depth-drive"
+          ? "Preparing the Amber Frame template..."
+          : params.templateId === "iron-echo"
+            ? "Preparing the Noir Motion template..."
+            : params.templateId === "arena-lift"
+              ? "Preparing the Coach Slate template..."
+              : "Preparing the Clean Strength template..."
   });
 
-  recorder.start(250);
+  recorder.start(400);
   try {
-    await audioContext.resume();
+    if (audioContext) {
+      await audioContext.resume();
+    }
   } catch {
     // The generated export can still proceed without audible monitor output.
   }
 
+  if (params.templateId === "primary" && loadPrimaryTrackBuffer) {
+    try {
+      primaryTrackBuffer = await loadPrimaryTrackBuffer();
+    } catch {
+      cleanup();
+      throw new Error("Could not load the soundtrack for the Primary template.");
+    }
+  }
+
   try {
+    if (renderWindow.startSec > 0.01) {
+      await seekVideo(sourceVideo, renderWindow.startSec);
+    }
     await sourceVideo.play();
   } catch {
     cleanup();
     throw new Error("The source video could not start playing for template rendering.");
   }
 
-  if (params.templateId === "rep-bingo" && repMomentsSec.length > 0) {
+  if (params.templateId === "primary" && audioContext && audioDestination && primaryTrackBuffer) {
+    const primaryTrackSource = audioContext.createBufferSource();
+    const primaryTrackGain = audioContext.createGain();
+
+    primaryTrackSource.buffer = primaryTrackBuffer;
+    primaryTrackGain.gain.value = 0.9;
+    primaryTrackSource.connect(primaryTrackGain);
+    primaryTrackGain.connect(audioDestination);
+    primaryTrackSource.start(audioContext.currentTime + 0.02, 0);
+    primaryTrackSource.onended = () => {
+      primaryTrackSource.disconnect();
+      primaryTrackGain.disconnect();
+    };
+    activePrimaryTrackSource = primaryTrackSource;
+  }
+
+  if (params.templateId === "rep-bingo" && repMomentsSec.length > 0 && audioContext && audioDestination) {
     const playbackStartAudioTime = audioContext.currentTime;
     repMomentsSec.forEach((repMomentSec) => {
       scheduleRepChime(
         audioContext,
         audioDestination,
-        playbackStartAudioTime + repMomentSec
+        playbackStartAudioTime + Math.max(0, repMomentSec - renderWindow.startSec)
       );
     });
   }
 
   renderLoop();
-  await waitForEvent(sourceVideo, "ended");
-  drawFrameForTemplate({
-    templateId: params.templateId,
-    context,
-    video: sourceVideo,
-    canvasWidth: outputSize.width,
-    canvasHeight: outputSize.height,
-    focusX,
-    focusY,
-    zoom,
-    activeRepBubbleStrength: 0,
-    completedRepCount
-  });
-
-  params.onProgress?.({
-    progress: 0.99,
-    message: "Wrapping up the edited export..."
-  });
-
-  if (recorder.state !== "inactive") {
-    recorder.stop();
+  if (renderWindow.endSec >= durationSec - 0.04) {
+    sourceVideo.addEventListener("ended", finalizeRender, { once: true });
   }
-
   const blob = await blobPromise;
   cleanup();
 
