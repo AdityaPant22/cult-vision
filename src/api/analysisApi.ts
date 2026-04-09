@@ -46,6 +46,7 @@ export interface BackendRecordingItem {
   status: string;
   asset_url: string | null;
   mime_type: string | null;
+  cloud_sync_status: string | null;
   latest_result: BackendAnalysisResultPayload | null;
 }
 
@@ -194,6 +195,7 @@ export async function createRecordingSession(payload: {
   zoneName: string;
   userId: string;
   userName: string;
+  phoneNumber: string;
   selectedExercise: SupportedExerciseId;
   startedAt?: string;
 }): Promise<CreateRecordingSessionResponse> {
@@ -208,6 +210,7 @@ export async function createRecordingSession(payload: {
       zone_name: payload.zoneName,
       user_id: payload.userId,
       user_name: payload.userName,
+      phone_number: payload.phoneNumber,
       selected_exercise: payload.selectedExercise,
       started_at: payload.startedAt
     })

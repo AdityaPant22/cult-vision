@@ -67,6 +67,7 @@ export default function App() {
   const {
     backendStatus,
     serverRecordings,
+    syncToasts,
     refreshRecordingsFromServer,
     verifyBackendConnection
   } = useBackendRecordings({
@@ -254,11 +255,11 @@ export default function App() {
     });
 
     if (resolution.type === "existing-user") {
-      dispatch({ type: "AUTHENTICATE_USER", payload: { user: resolution.user } });
+      dispatch({ type: "AUTHENTICATE_USER", payload: { user: resolution.user, phone } });
     } else {
       dispatch({
         type: "CREATE_AND_AUTHENTICATE_USER",
-        payload: { name: resolution.name }
+        payload: { name: resolution.name, phone }
       });
     }
 
@@ -494,6 +495,16 @@ export default function App() {
         onClose={() => setIsDebugOpen(false)}
         onResetDevice={handleResetDevice}
       />
+
+      {syncToasts.length > 0 && (
+        <div className="sync-toast-container">
+          {syncToasts.map((toast) => (
+            <div key={toast.id} className={`sync-toast sync-toast--${toast.type}`}>
+              {toast.type === "success" ? "✓" : "ℹ"} {toast.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

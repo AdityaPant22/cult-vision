@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, List, Optional
 
 import cv2
+import time
+
 import numpy as np
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +24,7 @@ try:
 except ModuleNotFoundError:
     create_supabase_client = None
 
-from .analysis_engine import LivePoseAnalyzerSession, analyze_video_file, generate_id
+from .analysis_engine import ExerciseSummary, LivePoseAnalyzerSession, analyze_video_file, generate_id
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from .models import AnalysisJob, AnalysisResult, Recording, RepEvent
@@ -54,6 +58,14 @@ def ensure_schema() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE recordings ADD COLUMN selected_exercise VARCHAR"
             )
+        if "phone_number" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE recordings ADD COLUMN phone_number VARCHAR"
+            )
+        if "cloud_sync_status" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE recordings ADD COLUMN cloud_sync_status VARCHAR"
+            )
 
 
 ensure_schema()
@@ -74,6 +86,72 @@ supabase_client = (
     if create_supabase_client and settings.supabase_url and settings.supabase_key
     else None
 )
+
+
+logger = logging.getLogger("cult_vision")
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "google/gemini-2.0-flash-001"
+
+
+def generate_ai_feedback(summary: ExerciseSummary) -> dict:
+    """Call OpenRouter to get structured, motivating feedback categories."""
+    if not settings.openrouter_api_key:
+        return {}
+
+    prompt = f"""You are a supportive and motivating fitness coach. Based on the workout analysis below,
+generate feedback in exactly 4 categories: Depth, Stability, Tempo, and Strain.
+
+Rules:
+- Depth: be constructive -- give specific, actionable advice on range of motion and how to improve
+- Stability: comment on body control, balance, and steadiness during the movement
+- Tempo: comment on rep speed, consistency, and rhythm
+- Strain: comment on effort level relative to the weight lifted and reps completed
+- Be warm, personal, and motivating -- make them want to come back
+- Each category value should be 1-2 sentences max
+- Return ONLY valid JSON with exactly these 4 keys: "Depth", "Stability", "Tempo", "Strain"
+
+Example output format:
+{{"Depth": "Try sitting 2 inches deeper by widening your stance slightly -- this will activate your glutes more.", "Stability": "Great balance throughout your set, your core is doing solid work.", "Tempo": "Nice consistent rhythm across all reps, keep that cadence.", "Strain": "Good effort pushing through 5 reps at 20kg -- you could handle a small bump next session."}}
+
+Workout Analysis:
+- Exercise: {summary.exercise}
+- Reps completed: {summary.rep_count}
+- Overall score: {summary.overall_score}/100
+- Range of motion: {summary.metrics.get('range_of_motion', 0)}/100
+- Stability: {summary.metrics.get('stability', 0)}/100
+- Tempo: {summary.metrics.get('tempo', 0)}/100
+- Setup quality: {summary.metrics.get('setup', 0)}/100
+- Form feedback: {'; '.join(summary.feedback)}
+- Coaching cues: {'; '.join(summary.cues)}
+
+Return ONLY the JSON object, no markdown fences, no extra text."""
+
+    try:
+        resp = http_requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+            },
+            timeout=30,
+        )
+        if not resp.ok:
+            logger.warning("OpenRouter request failed (%s): %s", resp.status_code, resp.text[:300])
+            return {}
+
+        content = resp.json()["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(content)
+    except Exception as exc:
+        logger.warning("AI feedback generation failed: %s", exc)
+        return {}
 
 
 def upload_to_cloudinary(file_bytes: bytes, filename: str) -> str:
@@ -170,6 +248,7 @@ def create_recording(
         zone_name=payload.zone_name,
         user_id=payload.user_id,
         user_name=payload.user_name,
+        phone_number=payload.phone_number or None,
         selected_exercise=payload.selected_exercise,
         started_at=started_at,
         live_analysis_token=live_analysis_token,
@@ -281,7 +360,53 @@ def run_recording_analysis_job(recording_id: str) -> None:
             )
 
         recording.status = "ready"
+        recording.cloud_sync_status = "uploading_video"
         db.commit()
+
+        try:
+            ai_feedback = generate_ai_feedback(summary)
+
+            video_bytes = asset_path.read_bytes()
+            cdn_url = upload_to_cloudinary(
+                video_bytes, f"{recording_id}{asset_path.suffix}"
+            )
+
+            recording.cloud_sync_status = "video_uploaded"
+            db.commit()
+
+            if supabase_client:
+                recording.cloud_sync_status = "saving_data"
+                db.commit()
+
+                meta = {
+                    "dateTime": int(time.time() * 1000),
+                    "exercise": summary.exercise,
+                    "reps": summary.rep_count,
+                    "form_score": round(summary.overall_score / 100, 2),
+                    "feedback": ai_feedback if ai_feedback else {},
+                }
+
+                supabase_client.table("userVedios").insert({
+                    "cdn_url": cdn_url,
+                    "phone_number": recording.phone_number or recording.user_id,
+                    "meta": meta,
+                }).execute()
+
+                recording.cloud_sync_status = "synced"
+                db.commit()
+
+                logger.info(
+                    "Recording %s synced to Cloudinary + Supabase", recording_id
+                )
+        except Exception as sync_error:
+            recording.cloud_sync_status = "failed"
+            db.commit()
+            logger.warning(
+                "Cloudinary/Supabase sync failed for %s (SQLite data is safe): %s",
+                recording_id,
+                sync_error,
+            )
+
     except Exception as error:
         job = (
             db.query(AnalysisJob)
@@ -335,6 +460,7 @@ def list_recordings(db: Session = Depends(get_db)):
             status=item.status,
             asset_url=item.asset_url,
             mime_type=item.mime_type,
+            cloud_sync_status=item.cloud_sync_status,
             latest_result=analysis_payload_from_model(item.latest_result),
         )
         for item in recordings
@@ -562,15 +688,45 @@ async def upload_video_to_cdn(
         raise HTTPException(status_code=503, detail="Cloudinary not configured")
 
     content = await file.read()
+
+    meta: dict = {
+        "dateTime": int(time.time() * 1000),
+        "exercise": "",
+        "reps": 0,
+        "form_score": 0.0,
+        "feedback": {},
+    }
+
+    try:
+        extension = Path(file.filename or "video.mp4").suffix or ".mp4"
+        with tempfile.NamedTemporaryFile(suffix=extension, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        try:
+            summary = analyze_video_file(tmp_path)
+            meta["exercise"] = summary.exercise
+            meta["reps"] = summary.rep_count
+            meta["form_score"] = round(summary.overall_score / 100, 2)
+            meta["feedback"] = generate_ai_feedback(summary)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning("Video analysis failed, saving without summary: %s", exc)
+
     video_url = upload_to_cloudinary(content, file.filename or "video.mp4")
 
     supabase_client.table("userVedios").insert({
         "cdn_url": video_url,
         "phone_number": phone,
-        "meta": {"source": "cult-vision-upload"},
+        "meta": meta,
     }).execute()
 
-    return {"url": video_url, "phone": phone}
+    return {
+        "url": video_url,
+        "phone": phone,
+        "meta": meta,
+    }
 
 
 @app.get(f"{settings.api_prefix}/videos")

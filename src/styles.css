@@ -1928,3 +1928,43 @@ button:disabled {
     height: 160px;
   }
 }
+
+.sync-toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sync-toast {
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #fff;
+  backdrop-filter: blur(12px);
+  animation: sync-toast-in 0.3s ease-out, sync-toast-out 0.3s ease-in 1.5s forwards;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.sync-toast--success {
+  background: rgba(34, 197, 94, 0.92);
+}
+
+.sync-toast--info {
+  background: rgba(59, 130, 246, 0.92);
+}
+
+@keyframes sync-toast-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes sync-toast-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(40px); }
+}

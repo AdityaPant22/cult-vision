@@ -9,8 +9,8 @@ import {
 } from "../types";
 
 type Action =
-  | { type: "AUTHENTICATE_USER"; payload: { user: User } }
-  | { type: "CREATE_AND_AUTHENTICATE_USER"; payload: { name: string } }
+  | { type: "AUTHENTICATE_USER"; payload: { user: User; phone: string } }
+  | { type: "CREATE_AND_AUTHENTICATE_USER"; payload: { name: string; phone: string } }
   | { type: "ACCEPT_TERMS" }
   | { type: "SELECT_ACTIVE_USER"; payload: { sessionUserId: string } }
   | {
@@ -183,6 +183,7 @@ export function kioskReducer(state: AppState, action: Action): AppState {
               sessionUserId: nextSessionUserId,
               userId: action.payload.user.id,
               userName: action.payload.user.name,
+              phoneNumber: action.payload.phone,
               joinedAt: new Date().toISOString(),
               isActive: false
             }
@@ -224,6 +225,7 @@ export function kioskReducer(state: AppState, action: Action): AppState {
           sessionUserId: createId("session"),
           userId: newUser.id,
           userName: newUser.name,
+          phoneNumber: action.payload.phone,
           joinedAt: new Date().toISOString(),
           isActive: false
         }
