@@ -13,6 +13,13 @@ export type EditedRecordingAsset = {
   createdAt: string;
 };
 
+export type EditedRecordingAssetsByRecording = Record<
+  string,
+  Partial<Record<VideoTemplateId, EditedRecordingAsset>>
+>;
+
+export type SelectedTemplateIdsByRecording = Partial<Record<string, VideoTemplateId>>;
+
 export type TemplateProcessingState = {
   recordingId: string;
   templateId: VideoTemplateId;
@@ -20,3 +27,5 @@ export type TemplateProcessingState = {
   message: string;
   error: string | null;
 };
+
+export type TemplateProcessingStatesByKey = Record<string, TemplateProcessingState>;

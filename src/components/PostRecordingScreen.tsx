@@ -1,7 +1,15 @@
-import { ExercisePicker } from "./ExercisePicker";
+import { TemplateProcessingState } from "../features/recording-library/model/types";
 import { formatDuration } from "../shared/lib/format";
-import { AuthenticatedUserSession, Recording, RecordingLibraryItem } from "../types";
-import { SupportedExerciseId } from "../types";
+import {
+  AuthenticatedUserSession,
+  Recording,
+  RecordingLibraryItem,
+  SupportedExerciseId,
+  VideoTemplateId
+} from "../types";
+import { ExercisePicker } from "./ExercisePicker";
+import { TemplateGallery } from "./TemplateGallery";
+import { TemplatePreviewVideo } from "./TemplatePreviewVideo";
 
 interface PostRecordingScreenProps {
   activeUser: AuthenticatedUserSession | null;
@@ -10,11 +18,16 @@ interface PostRecordingScreenProps {
   otherUsers: AuthenticatedUserSession[];
   isBackendOnline: boolean;
   selectedExerciseId: SupportedExerciseId | null;
+  templateProcessingStates: Partial<Record<VideoTemplateId, TemplateProcessingState>>;
+  queuedTemplateIds: VideoTemplateId[];
+  onStartTemplateRender: (templateId: VideoTemplateId) => void;
   onRecordNextSet: () => void;
   onEndActiveUser: () => void;
   onAddNewUser: () => void;
   onSelectExercise: (exerciseId: SupportedExerciseId) => void;
   onOpenTemplates: () => void;
+  onSelectTemplate: (templateId: VideoTemplateId) => void;
+  onRetryTemplate: (templateId: VideoTemplateId) => void;
   onSwitchUser: (sessionUserId: string) => void;
   isTemplateProcessing: boolean;
 }
@@ -26,14 +39,21 @@ export function PostRecordingScreen({
   otherUsers,
   isBackendOnline,
   selectedExerciseId,
+  templateProcessingStates,
+  queuedTemplateIds,
+  onStartTemplateRender,
   onRecordNextSet,
   onEndActiveUser,
   onAddNewUser,
   onSelectExercise,
   onOpenTemplates,
+  onSelectTemplate,
+  onRetryTemplate,
   onSwitchUser,
   isTemplateProcessing
 }: PostRecordingScreenProps) {
+  const renderedTemplateCount = latestRecordingItem?.editedVersions.length ?? 0;
+
   return (
     <section className="screen">
       <div className="panel panel-large">
@@ -104,49 +124,84 @@ export function PostRecordingScreen({
           Add New User
         </button>
         <button className="ghost-button tall-button" type="button" onClick={onOpenTemplates}>
-          {latestRecordingItem?.editedVersion ? "View Templates Again" : "View Templates"}
+          Open Full Gallery
         </button>
         <button className="ghost-button tall-button" type="button" onClick={onEndActiveUser}>
           End
         </button>
       </div>
 
-      {isTemplateProcessing || latestRecordingItem?.editedVersion ? (
+      {latestRecordingItem ? (
         <div className="panel">
           <div className="panel-header">
             <div>
-              <p className="eyebrow">Edited Clip</p>
+              <p className="eyebrow">Template Gallery</p>
               <h2>
-                {latestRecordingItem?.editedVersion?.templateName ?? "Rendering template..."}
+                {renderedTemplateCount > 0
+                  ? `Choose from ${renderedTemplateCount} rendered options`
+                  : "Preview templates and start the ones you want"}
               </h2>
             </div>
-            {latestRecordingItem?.editedVersion ? (
+            {latestRecordingItem.editedVersion ? (
               <a
                 className="secondary-button"
                 href={latestRecordingItem.editedVersion.playbackUrl}
                 download={`${latestRecording.userName.toLowerCase().replace(/\s+/g, "-")}-${latestRecordingItem.editedVersion.templateId}.webm`}
               >
-                Download Edit
+                Download Chosen Edit
               </a>
             ) : null}
           </div>
 
-          {latestRecordingItem?.editedVersion ? (
-            <video
-              className="recording-video"
-              controls
-              playsInline
-              preload="metadata"
-              src={latestRecordingItem.editedVersion.playbackUrl}
-            />
-          ) : (
+          <p className="subtle-copy">
+            Review the style samples first. Start rendering only the templates you want, then
+            open the finished ones here to preview the full edit.
+          </p>
+
+          {latestRecordingItem.editedVersion ? (
+            <div className="template-result-card">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Current Preview</p>
+                  <h2>{latestRecordingItem.editedVersion.templateName}</h2>
+                </div>
+                <a
+                  className="secondary-button"
+                  href={latestRecordingItem.editedVersion.playbackUrl}
+                  download={`${latestRecording.userName.toLowerCase().replace(/\s+/g, "-")}-${latestRecordingItem.editedVersion.templateId}.webm`}
+                >
+                  Download Preview
+                </a>
+              </div>
+              <TemplatePreviewVideo
+                className="template-result-video"
+                controls
+                autoPlay
+                loop
+                src={latestRecordingItem.editedVersion.playbackUrl}
+              />
+            </div>
+          ) : null}
+
+          <TemplateGallery
+            recording={latestRecordingItem}
+            processingStates={templateProcessingStates}
+            queuedTemplateIds={queuedTemplateIds}
+            onStartRender={onStartTemplateRender}
+            onSelectTemplate={onSelectTemplate}
+            onRetryTemplate={onRetryTemplate}
+            compact
+          />
+
+          {isTemplateProcessing && !latestRecordingItem.editedVersion ? (
             <div className="template-inline-status">
-              <strong>Applying the selected gym template...</strong>
+              <strong>Rendering selected templates...</strong>
               <p className="subtle-copy">
-                We are turning this raw set into a polished, shareable gym clip.
+                Any template you started will keep moving through the queue here as each export
+                finishes.
               </p>
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
 

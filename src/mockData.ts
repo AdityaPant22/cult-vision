@@ -50,7 +50,7 @@ export function createInitialState(): AppState {
     lastCompletedRecordingId: null,
     pendingTermsSessionUserId: null,
     inactivity: {
-      enabled: true,
+      enabled: false,
       idleTimeoutSec: 60,
       warningCountdownSec: 10,
       warningStartedAt: null

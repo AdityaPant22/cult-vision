@@ -5,8 +5,10 @@ import {
   formatCalibrationState,
   formatLiveConnectionState
 } from "../features/live-analysis/model/presentation";
+import { loadSilhouetteGuideSettings } from "../features/silhouette-guide/model/guideSettings";
 import { formatPhaseLabel, formatTimer } from "../shared/lib/format";
 import { AuthenticatedUserSession, Recording, SupportedExerciseId } from "../types";
+import { SquatSilhouetteGuide } from "./SquatSilhouetteGuide";
 
 interface RecordingScreenProps {
   activeUser: AuthenticatedUserSession;
@@ -39,6 +41,8 @@ export function RecordingScreen({
     liveAnalysis?.selected_exercise ??
     (liveAnalysis?.exercise as SupportedExerciseId | undefined) ??
     null;
+  const shouldShowSquatGuide = exerciseLabel === "Squat";
+  const silhouetteGuideSettings = useMemo(() => loadSilhouetteGuideSettings(), []);
 
   const landmarkMap = useMemo(
     () =>
@@ -136,6 +140,9 @@ export function RecordingScreen({
                     muted
                     playsInline
                   />
+                  {shouldShowSquatGuide ? (
+                    <SquatSilhouetteGuide settings={silhouetteGuideSettings} />
+                  ) : null}
                   {!isCountingDown && (liveAnalysis?.pose_landmarks.length ?? 0) > 0 ? (
                     <svg
                       className="pose-overlay"

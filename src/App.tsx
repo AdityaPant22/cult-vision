@@ -19,11 +19,11 @@ import { buildRecordingLibraryItems } from "./features/recording-library/model/b
 import { useRecordingSession } from "./features/recording-session/model/useRecordingSession";
 import { useBackendRecordings } from "./features/recordings-sync/model/useBackendRecordings";
 import { useTemplateRendering } from "./features/video-templates/model/useTemplateRendering";
-import { useInactivityTimeout } from "./hooks/useInactivityTimeout";
 import { usePersistentReducer } from "./hooks/usePersistentReducer";
 import { createInitialState, STORAGE_KEY } from "./mockData";
 import { AnalysisWorkspacePage } from "./pages/AnalysisWorkspacePage";
 import { KioskPage } from "./pages/KioskPage";
+import { SetupPage } from "./pages/SetupPage";
 import { kioskReducer } from "./reducer/kioskReducer";
 
 export default function App() {
@@ -69,11 +69,14 @@ export default function App() {
 
   const {
     editedRecordingAssets,
-    templateProcessingState,
-    applyTemplateToRecording,
+    selectedTemplateIds,
+    templateProcessingStates,
+    queuedTemplateIdsByRecording,
+    startTemplateRender,
+    retryTemplateRender,
+    selectTemplateForRecording,
     clearEditedRecordingAssets,
-    deleteEditedRecordingAsset,
-    setTemplateProcessingState
+    deleteEditedRecordingAsset
   } = useTemplateRendering({
     onError: setCameraError
   });
@@ -110,12 +113,14 @@ export default function App() {
         serverRecordings,
         recordingAssets,
         editedRecordingAssets,
+        selectedTemplateIds,
         deviceName: state.deviceSession.deviceName,
         zoneName: state.deviceSession.zoneName
       }),
     [
       editedRecordingAssets,
       recordingAssets,
+      selectedTemplateIds,
       serverRecordings,
       state.deviceSession.deviceName,
       state.deviceSession.recordings,
@@ -130,10 +135,36 @@ export default function App() {
         : null,
     [latestRecording, recordingLibraryItems]
   );
+  const hasQueuedTemplatesForLatestRecording = latestRecording?.id
+    ? (queuedTemplateIdsByRecording[latestRecording.id]?.length ?? 0) > 0
+    : false;
+  const hasRenderingTemplatesForLatestRecording = latestRecording?.id
+    ? Object.values(templateProcessingStates).some(
+        (stateItem) =>
+          stateItem.recordingId === latestRecording.id &&
+          !stateItem.error &&
+          stateItem.progress < 1
+      )
+    : false;
   const isTemplateProcessingForLatestRecording =
-    templateProcessingState?.recordingId === latestRecording?.id &&
-    !templateProcessingState?.error &&
-    (templateProcessingState?.progress ?? 1) < 1;
+    hasQueuedTemplatesForLatestRecording || hasRenderingTemplatesForLatestRecording;
+
+  const latestRecordingTemplateProcessingStates = useMemo(() => {
+    if (!latestRecording?.id) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.values(templateProcessingStates)
+        .filter((stateItem) => stateItem.recordingId === latestRecording.id)
+        .map((stateItem) => [stateItem.templateId, stateItem])
+    );
+  }, [latestRecording?.id, templateProcessingStates]);
+
+  const latestRecordingQueuedTemplateIds = useMemo(
+    () => (latestRecording?.id ? queuedTemplateIdsByRecording[latestRecording.id] ?? [] : []),
+    [latestRecording?.id, queuedTemplateIdsByRecording]
+  );
 
   const shouldShowRecordingScreen =
     route === "kiosk" &&
@@ -185,25 +216,8 @@ export default function App() {
     setCameraError(null);
     setIsRecordingsOpen(false);
     setIsTemplatesOpen(false);
-    setTemplateProcessingState(null);
     dispatch({ type: "RESET_DEVICE" });
   };
-
-  const { remainingWarningSec } = useInactivityTimeout({
-    enabled: state.inactivity.enabled,
-    isRecording: state.view === "recording",
-    hasAuthenticatedUsers: state.deviceSession.authenticatedUsers.length > 0,
-    idleTimeoutSec: state.inactivity.idleTimeoutSec,
-    warningCountdownSec: state.inactivity.warningCountdownSec,
-    warningStartedAt: state.inactivity.warningStartedAt,
-    onShowWarning: () =>
-      dispatch({
-        type: "SHOW_INACTIVITY_WARNING",
-        payload: { startedAt: new Date().toISOString() }
-      }),
-    onHideWarning: () => dispatch({ type: "HIDE_INACTIVITY_WARNING" }),
-    onReset: handleResetDevice
-  });
 
   const closeAuthModal = () => setAuthModalMode(null);
 
@@ -268,6 +282,14 @@ export default function App() {
       </button>
 
       <button
+        className="setup-toggle"
+        onClick={() => navigateTo(route === "setup" ? "kiosk" : "setup")}
+        type="button"
+      >
+        {route === "setup" ? "Kiosk" : "Setup"}
+      </button>
+
+      <button
         className="recordings-toggle"
         onClick={() => setIsRecordingsOpen(true)}
         type="button"
@@ -289,6 +311,8 @@ export default function App() {
             onDeleteUploadedFile={deleteUploadedAnalysisFile}
             onRefreshRecordings={() => refreshRecordingsFromServer(true)}
           />
+        ) : route === "setup" ? (
+          <SetupPage />
         ) : (
           <KioskPage
             state={state}
@@ -305,6 +329,17 @@ export default function App() {
             countdownSec={countdownSec}
             isBackendOnline={backendStatus === "online"}
             isTemplateProcessing={isTemplateProcessingForLatestRecording}
+            templateProcessingStates={latestRecordingTemplateProcessingStates}
+            queuedTemplateIds={latestRecordingQueuedTemplateIds}
+            onStartTemplateRender={(templateId) => {
+              if (latestRecordingLibraryItem) {
+                startTemplateRender(
+                  recordingLibraryItems,
+                  latestRecordingLibraryItem.id,
+                  templateId
+                );
+              }
+            }}
             onSubmitPhone={handlePhoneSubmit}
             onSelectUser={(sessionUserId) =>
               dispatch({ type: "SELECT_ACTIVE_USER", payload: { sessionUserId } })
@@ -322,29 +357,26 @@ export default function App() {
             onAddNewUser={() => setAuthModalMode("add")}
             onEndActiveUser={() => dispatch({ type: "END_ACTIVE_USER" })}
             onOpenTemplates={() => setIsTemplatesOpen(true)}
+            onSelectTemplate={(templateId) => {
+              if (latestRecordingLibraryItem) {
+                selectTemplateForRecording(latestRecordingLibraryItem.id, templateId);
+              }
+            }}
+            onRetryTemplate={(templateId) => {
+              if (latestRecordingLibraryItem) {
+                retryTemplateRender(
+                  recordingLibraryItems,
+                  latestRecordingLibraryItem.id,
+                  templateId
+                );
+              }
+            }}
             onSwitchUser={(sessionUserId) =>
               dispatch({ type: "SELECT_ACTIVE_USER", payload: { sessionUserId } })
             }
           />
         )}
       </main>
-
-      {state.inactivity.warningStartedAt ? (
-        <div className="warning-toast">
-          <strong>Device idle</strong>
-          <span>
-            Session will reset in {remainingWarningSec}s unless someone interacts with the
-            screen.
-          </span>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => dispatch({ type: "HIDE_INACTIVITY_WARNING" })}
-          >
-            Stay Signed In
-          </button>
-        </div>
-      ) : null}
 
       {cameraError ? <div className="camera-error-toast">{cameraError}</div> : null}
 
@@ -369,15 +401,21 @@ export default function App() {
       <TemplatesModal
         open={isTemplatesOpen}
         recording={latestRecordingLibraryItem}
-        editedVersion={latestRecordingLibraryItem?.editedVersion ?? null}
-        processingState={templateProcessingState}
-        onApplyTemplate={(templateId) => {
+        processingStates={latestRecordingTemplateProcessingStates}
+        queuedTemplateIds={latestRecordingQueuedTemplateIds}
+        onStartRender={(templateId) => {
           if (latestRecordingLibraryItem) {
-            void applyTemplateToRecording(
-              recordingLibraryItems,
-              latestRecordingLibraryItem.id,
-              templateId
-            );
+            startTemplateRender(recordingLibraryItems, latestRecordingLibraryItem.id, templateId);
+          }
+        }}
+        onSelectTemplate={(templateId) => {
+          if (latestRecordingLibraryItem) {
+            selectTemplateForRecording(latestRecordingLibraryItem.id, templateId);
+          }
+        }}
+        onRetryTemplate={(templateId) => {
+          if (latestRecordingLibraryItem) {
+            retryTemplateRender(recordingLibraryItems, latestRecordingLibraryItem.id, templateId);
           }
         }}
         onClose={() => setIsTemplatesOpen(false)}
@@ -386,11 +424,7 @@ export default function App() {
       <DebugPanel
         open={isDebugOpen}
         state={state}
-        remainingWarningSec={remainingWarningSec}
         onClose={() => setIsDebugOpen(false)}
-        onToggleTimeout={(enabled) =>
-          dispatch({ type: "SET_TIMEOUT_ENABLED", payload: { enabled } })
-        }
         onResetDevice={handleResetDevice}
       />
     </div>
