@@ -4,16 +4,10 @@ import {
   createAnalysisJobs,
   getAnalysisJob
 } from "../api/analysisApi";
+import { UploadedAnalysisFile } from "../features/analysis-uploads/model/types";
+import { sleep } from "../shared/lib/async";
+import { formatDuration, formatFileSize } from "../shared/lib/format";
 import { RecordingLibraryItem } from "../types";
-
-export interface UploadedAnalysisFile {
-  id: string;
-  name: string;
-  url: string;
-  mimeType: string;
-  size: number;
-  file: File;
-}
 
 interface AnalysisPageProps {
   recordings: RecordingLibraryItem[];
@@ -22,30 +16,6 @@ interface AnalysisPageProps {
   onDeleteRecording: (recordingId: string) => void;
   onDeleteUploadedFile: (fileId: string) => void;
   onRefreshRecordings: () => Promise<void>;
-}
-
-function formatSize(size: number): string {
-  if (size < 1024 * 1024) {
-    return `${Math.round(size / 1024)} KB`;
-  }
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDuration(totalSec: number): string {
-  if (totalSec < 60) {
-    return `${totalSec}s`;
-  }
-
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}m ${seconds}s`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }
 
 export function AnalysisPage({
@@ -299,7 +269,7 @@ export function AnalysisPage({
                       />
                       <span>
                         <strong>{file.name}</strong>
-                        <small>{formatSize(file.size)}</small>
+                        <small>{formatFileSize(file.size)}</small>
                       </span>
                     </label>
 
@@ -349,7 +319,7 @@ export function AnalysisPage({
               {selectedUploadItems.map((item) => (
                 <div key={item.id} className="history-item">
                   <span>{item.name}</span>
-                  <span>{formatSize(item.size)}</span>
+                  <span>{formatFileSize(item.size)}</span>
                 </div>
               ))}
             </div>

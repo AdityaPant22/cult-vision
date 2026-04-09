@@ -1,4 +1,5 @@
 import { RecordingLibraryItem } from "../types";
+import { formatDuration } from "../shared/lib/format";
 import { Modal } from "./Modal";
 
 interface RecordingsModalProps {
@@ -6,16 +7,6 @@ interface RecordingsModalProps {
   recordings: RecordingLibraryItem[];
   onDeleteRecording: (recordingId: string) => void;
   onClose: () => void;
-}
-
-function formatDuration(totalSec: number): string {
-  if (totalSec < 60) {
-    return `${totalSec}s`;
-  }
-
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}m ${seconds}s`;
 }
 
 export function RecordingsModal({

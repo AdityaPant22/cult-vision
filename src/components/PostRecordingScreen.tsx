@@ -1,4 +1,5 @@
 import { ExercisePicker } from "./ExercisePicker";
+import { formatDuration } from "../shared/lib/format";
 import { AuthenticatedUserSession, Recording, RecordingLibraryItem } from "../types";
 import { SupportedExerciseId } from "../types";
 
@@ -16,16 +17,6 @@ interface PostRecordingScreenProps {
   onOpenTemplates: () => void;
   onSwitchUser: (sessionUserId: string) => void;
   isTemplateProcessing: boolean;
-}
-
-function formatDuration(totalSec: number): string {
-  if (totalSec < 60) {
-    return `${totalSec}s`;
-  }
-
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}m ${seconds}s`;
 }
 
 export function PostRecordingScreen({

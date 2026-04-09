@@ -7,12 +7,14 @@ __pycache__/
 dist/
 dist-plain/
 coverage/
+docs/
 
 backend/data/
 backend/models/*.task
 
 *.tsbuildinfo
 .DS_Store
+.idea/
 .env
 .env.*
 npm-debug.log*

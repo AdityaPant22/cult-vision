@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { LiveAnalysisUpdate } from "../api/analysisApi";
+import { FULL_POSE_CONNECTIONS } from "../features/live-analysis/model/overlay";
+import {
+  formatCalibrationState,
+  formatLiveConnectionState
+} from "../features/live-analysis/model/presentation";
+import { formatPhaseLabel, formatTimer } from "../shared/lib/format";
 import { AuthenticatedUserSession, Recording, SupportedExerciseId } from "../types";
 
 interface RecordingScreenProps {
@@ -12,77 +18,6 @@ interface RecordingScreenProps {
   countdownSec: number | null;
   onStopRecording: () => void;
   onCancelRecording: () => void;
-}
-
-const FULL_POSE_CONNECTIONS: Array<[string, string]> = [
-  ["nose", "left_eye"],
-  ["left_eye", "left_ear"],
-  ["nose", "right_eye"],
-  ["right_eye", "right_ear"],
-  ["nose", "mouth_left"],
-  ["nose", "mouth_right"],
-  ["left_shoulder", "right_shoulder"],
-  ["left_shoulder", "left_elbow"],
-  ["left_elbow", "left_wrist"],
-  ["right_shoulder", "right_elbow"],
-  ["right_elbow", "right_wrist"],
-  ["left_shoulder", "left_hip"],
-  ["right_shoulder", "right_hip"],
-  ["left_hip", "right_hip"],
-  ["left_hip", "left_knee"],
-  ["left_knee", "left_ankle"],
-  ["left_ankle", "left_heel"],
-  ["left_heel", "left_foot_index"],
-  ["right_hip", "right_knee"],
-  ["right_knee", "right_ankle"],
-  ["right_ankle", "right_heel"],
-  ["right_heel", "right_foot_index"]
-];
-
-function formatTimer(totalSec: number): string {
-  const minutes = Math.floor(totalSec / 60)
-    .toString()
-    .padStart(2, "0");
-  const seconds = (totalSec % 60).toString().padStart(2, "0");
-
-  return `${minutes}:${seconds}`;
-}
-
-function formatConnectionState(
-  state: RecordingScreenProps["liveAnalysisState"]
-): string {
-  switch (state) {
-    case "connecting":
-      return "Connecting";
-    case "live":
-      return "Guiding";
-    case "offline":
-      return "Offline";
-    default:
-      return "Waiting";
-  }
-}
-
-function formatCalibrationState(state: LiveAnalysisUpdate["calibration_state"] | undefined): string {
-  switch (state) {
-    case "ready":
-      return "Ready";
-    case "weak":
-      return "Adjust";
-    default:
-      return "Calibrating";
-  }
-}
-
-function formatPhaseLabel(phase: string | undefined): string {
-  if (!phase) {
-    return "--";
-  }
-
-  return phase
-    .split("-")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 export function RecordingScreen({
@@ -278,7 +213,7 @@ export function RecordingScreen({
               <span className={`status-pill ${isCountingDown ? "connecting" : liveAnalysisState}`}>
                 {isCountingDown
                   ? formatCalibrationState(liveAnalysis?.calibration_state)
-                  : formatConnectionState(liveAnalysisState)}
+                  : formatLiveConnectionState(liveAnalysisState)}
               </span>
             </div>
 

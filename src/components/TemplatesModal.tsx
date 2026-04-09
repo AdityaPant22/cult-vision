@@ -1,4 +1,5 @@
 import { getVideoTemplates } from "../editing/videoTemplates";
+import { formatDuration } from "../shared/lib/format";
 import { EditedRecordingVersion, RecordingLibraryItem, VideoTemplateId } from "../types";
 import { Modal } from "./Modal";
 
@@ -17,16 +18,6 @@ interface TemplatesModalProps {
   processingState: TemplateProcessingState | null;
   onApplyTemplate: (templateId: VideoTemplateId) => void;
   onClose: () => void;
-}
-
-function formatDuration(totalSec: number): string {
-  if (totalSec < 60) {
-    return `${totalSec}s`;
-  }
-
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}m ${seconds}s`;
 }
 
 export function TemplatesModal({
