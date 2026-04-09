@@ -10,12 +10,15 @@ from typing import Annotated, List, Optional
 
 import cv2
 import numpy as np
-import requests as http_requests
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from supabase import create_client as create_supabase_client
+
+try:
+    from supabase import create_client as create_supabase_client
+except ModuleNotFoundError:
+    create_supabase_client = None
 
 from .analysis_engine import LivePoseAnalyzerSession, analyze_video_file, generate_id
 from .config import settings
@@ -68,12 +71,20 @@ storage = get_storage_backend()
 
 supabase_client = (
     create_supabase_client(settings.supabase_url, settings.supabase_key)
-    if settings.supabase_url and settings.supabase_key
+    if create_supabase_client and settings.supabase_url and settings.supabase_key
     else None
 )
 
 
 def upload_to_cloudinary(file_bytes: bytes, filename: str) -> str:
+    try:
+        import requests as http_requests
+    except ModuleNotFoundError as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Cloudinary upload requires the 'requests' package in the backend environment.",
+        ) from error
+
     url = f"https://api.cloudinary.com/v1_1/{settings.cloudinary_cloud_name}/video/upload"
     resp = http_requests.post(
         url,

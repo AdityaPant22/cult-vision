@@ -14,6 +14,14 @@ type TemplateRenderJob = {
   templateId: VideoTemplateId;
 };
 
+function expandLinkedTemplateIds(templateId: VideoTemplateId): VideoTemplateId[] {
+  if (templateId === "primary" || templateId === "primary-dhurandhar") {
+    return ["primary", "primary-dhurandhar"];
+  }
+
+  return [templateId];
+}
+
 function getTemplateKey(recordingId: string, templateId: VideoTemplateId) {
   return `${recordingId}::${templateId}`;
 }
@@ -343,7 +351,9 @@ export function useTemplateRendering(params: {
         return;
       }
 
-      enqueueTemplateRender(targetRecording, templateId);
+      expandLinkedTemplateIds(templateId).forEach((linkedTemplateId) => {
+        enqueueTemplateRender(targetRecording, linkedTemplateId);
+      });
     },
     [enqueueTemplateRender]
   );
@@ -377,7 +387,9 @@ export function useTemplateRendering(params: {
         return;
       }
 
-      enqueueTemplateRender(targetRecording, templateId, true);
+      expandLinkedTemplateIds(templateId).forEach((linkedTemplateId) => {
+        enqueueTemplateRender(targetRecording, linkedTemplateId, true);
+      });
     },
     [enqueueTemplateRender]
   );
