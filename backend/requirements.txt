@@ -7,3 +7,6 @@ mediapipe==0.10.33
 opencv-contrib-python==4.13.0.92
 numpy==2.4.4
 boto3==1.35.29
+requests>=2.31.0
+supabase>=2.0.0
+python-dotenv>=1.0.0

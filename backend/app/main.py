@@ -10,10 +10,12 @@ from typing import Annotated, List, Optional
 
 import cv2
 import numpy as np
+import requests as http_requests
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from supabase import create_client as create_supabase_client
 
 from .analysis_engine import LivePoseAnalyzerSession, analyze_video_file, generate_id
 from .config import settings
@@ -63,6 +65,29 @@ app.add_middleware(
 )
 
 storage = get_storage_backend()
+
+supabase_client = (
+    create_supabase_client(settings.supabase_url, settings.supabase_key)
+    if settings.supabase_url and settings.supabase_key
+    else None
+)
+
+
+def upload_to_cloudinary(file_bytes: bytes, filename: str) -> str:
+    url = f"https://api.cloudinary.com/v1_1/{settings.cloudinary_cloud_name}/video/upload"
+    resp = http_requests.post(
+        url,
+        files={"file": (filename, file_bytes)},
+        data={"upload_preset": settings.cloudinary_upload_preset},
+        timeout=300,
+    )
+    if not resp.ok:
+        try:
+            detail = resp.json().get("error", {}).get("message", resp.text)
+        except Exception:
+            detail = resp.text or f"HTTP {resp.status_code}"
+        raise HTTPException(status_code=502, detail=f"Cloudinary upload failed: {detail}")
+    return resp.json()["secure_url"]
 
 
 def open_db_session() -> Session:
@@ -513,6 +538,43 @@ def get_analysis_job(job_id: str, db: Session = Depends(get_db)):
 def list_analysis_jobs(db: Session = Depends(get_db)):
     jobs = db.query(AnalysisJob).order_by(AnalysisJob.created_at.desc()).limit(25).all()
     return AnalysisJobsListResponse(jobs=[job_payload(job) for job in jobs])
+
+
+@app.post(f"{settings.api_prefix}/upload")
+async def upload_video_to_cdn(
+    file: UploadFile = File(...),
+    phone: str = Form("9999"),
+):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    if not settings.cloudinary_cloud_name:
+        raise HTTPException(status_code=503, detail="Cloudinary not configured")
+
+    content = await file.read()
+    video_url = upload_to_cloudinary(content, file.filename or "video.mp4")
+
+    supabase_client.table("userVedios").insert({
+        "cdn_url": video_url,
+        "phone_number": phone,
+        "meta": {"source": "cult-vision-upload"},
+    }).execute()
+
+    return {"url": video_url, "phone": phone}
+
+
+@app.get(f"{settings.api_prefix}/videos")
+def get_videos_by_phone(phone: str = "9999"):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    result = (
+        supabase_client.table("userVedios")
+        .select("*")
+        .eq("phone_number", phone)
+        .order("id", desc=True)
+        .execute()
+    )
+    return result.data
 
 
 @app.get(f"{settings.api_prefix}/assets/{{storage_key:path}}")
