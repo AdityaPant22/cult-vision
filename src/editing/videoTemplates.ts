@@ -10,6 +10,7 @@ export interface VideoTemplateDefinition {
   description: string;
   effects: string[];
   requiresRepTiming?: boolean;
+  requiresWeightInput?: boolean;
 }
 
 export interface TemplateRenderProgress {
@@ -63,7 +64,8 @@ const TEMPLATE_DEFINITIONS: VideoTemplateDefinition[] = [
     description:
       "Trims to the working set, gives the final rep a slow-motion hero beat, and lays in a music bed with a premium vertical story layout.",
     effects: ["Auto cull", "Last rep slow-mo", "Track 1", "Hero layout"],
-    requiresRepTiming: true
+    requiresRepTiming: true,
+    requiresWeightInput: true
   },
   {
     id: "primary-dhurandhar",
@@ -72,7 +74,8 @@ const TEMPLATE_DEFINITIONS: VideoTemplateDefinition[] = [
     description:
       "The same Primary hero cut, now rendered against the Dhurandhar soundtrack so you can choose the stronger music match.",
     effects: ["Auto cull", "Last rep slow-mo", "Dhurandhar track", "Hero layout"],
-    requiresRepTiming: true
+    requiresRepTiming: true,
+    requiresWeightInput: true
   },
   {
     id: "cult-eidos",
@@ -856,6 +859,7 @@ function drawPrimaryOverlay(params: {
   subjectName: string;
   logoImage: CanvasImageSource | null;
   repPulseStrength: number;
+  weightKg?: string;
 }) {
   const {
     context,
@@ -864,7 +868,8 @@ function drawPrimaryOverlay(params: {
     completedRepCount,
     titleText,
     logoImage,
-    repPulseStrength
+    repPulseStrength,
+    weightKg
   } = params;
   drawPrimaryLogoBadge({
     context,
@@ -921,6 +926,29 @@ function drawPrimaryOverlay(params: {
   context.fillStyle = "rgba(244, 244, 239, 0.48)";
   context.font = "300 28px 'Avenir Next', 'Segoe UI', sans-serif";
   context.fillText("done right.", 24, panelY + 44);
+
+  if (weightKg) {
+    const weightBaselineY = panelY + 32;
+    const weightRightX = canvasWidth - 24;
+    const unitText = "kg";
+
+    context.textAlign = "right";
+    context.fillStyle = "rgba(244, 244, 239, 0.38)";
+    context.font = "700 11px 'Avenir Next', 'Segoe UI', sans-serif";
+    context.fillText("WEIGHT", weightRightX, panelY + 2);
+
+    context.font = "700 16px 'Avenir Next', 'Segoe UI', sans-serif";
+    const unitWidth = context.measureText(unitText).width;
+    const unitGap = 6;
+
+    context.fillStyle = "rgba(244, 244, 239, 0.78)";
+    context.fillText(unitText, weightRightX, weightBaselineY);
+
+    context.fillStyle = "#f4f4ef";
+    context.font = "900 34px 'Avenir Next', 'Segoe UI', sans-serif";
+    context.fillText(weightKg, weightRightX - unitWidth - unitGap, weightBaselineY + 1);
+    context.textAlign = "left";
+  }
 
   context.fillStyle = "rgba(244, 244, 239, 0.78)";
   context.font = "600 14px 'Avenir Next', 'Segoe UI', sans-serif";
@@ -1190,6 +1218,7 @@ function drawFrameForTemplate(params: {
   subjectName: string;
   primaryLogoImage: CanvasImageSource | null;
   primaryRepPulseStrength: number;
+  weightKg?: string;
 }) {
   const crop = drawBaseVideoFrame(params);
 
@@ -1249,7 +1278,8 @@ function drawFrameForTemplate(params: {
       titleText: params.titleText,
       subjectName: params.subjectName,
       logoImage: params.primaryLogoImage,
-      repPulseStrength: params.primaryRepPulseStrength
+      repPulseStrength: params.primaryRepPulseStrength,
+      weightKg: params.weightKg
     });
     return;
   }
@@ -1545,6 +1575,10 @@ export function getVideoTemplates(): VideoTemplateDefinition[] {
   return TEMPLATE_DEFINITIONS;
 }
 
+export function templateNeedsWeightInput(templateId: VideoTemplateId): boolean {
+  return !!getTemplateDefinition(templateId).requiresWeightInput;
+}
+
 function getTemplateRenderWindow(params: {
   templateId: VideoTemplateId;
   durationSec: number;
@@ -1690,6 +1724,7 @@ export async function renderVideoTemplate(params: {
   durationSec?: number;
   titleText?: string;
   subjectName?: string;
+  weightKg?: string;
   onProgress?: (progress: TemplateRenderProgress) => void;
 }): Promise<TemplateRenderResult> {
   if (typeof document === "undefined" || typeof MediaRecorder === "undefined") {
@@ -1996,7 +2031,8 @@ export async function renderVideoTemplate(params: {
       titleText,
       subjectName,
       primaryLogoImage,
-      primaryRepPulseStrength: activePrimaryRepPulseStrength
+      primaryRepPulseStrength: activePrimaryRepPulseStrength,
+      weightKg: params.weightKg
     });
 
     const progressRatio =

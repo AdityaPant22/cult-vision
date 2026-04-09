@@ -12,6 +12,7 @@ import {
 type TemplateRenderJob = {
   recording: RecordingLibraryItem;
   templateId: VideoTemplateId;
+  weightKg?: string;
 };
 
 function expandLinkedTemplateIds(templateId: VideoTemplateId): VideoTemplateId[] {
@@ -156,7 +157,7 @@ export function useTemplateRendering(params: {
         break;
       }
 
-      const { recording, templateId } = job;
+      const { recording, templateId, weightKg } = job;
       const templateKey = getTemplateKey(recording.id, templateId);
 
       setQueuedTemplateIdsByRecording((current) => {
@@ -198,6 +199,7 @@ export function useTemplateRendering(params: {
           durationSec: recording.durationSec,
           titleText: recording.analysisResult?.exercise ?? "Strength Session",
           subjectName: recording.userName,
+          weightKg,
           onProgress: ({ progress, message }) => {
             setTemplateProcessingStates((current) => ({
               ...current,
@@ -278,7 +280,12 @@ export function useTemplateRendering(params: {
   }, [params.onError]);
 
   const enqueueTemplateRender = useCallback(
-    (recording: RecordingLibraryItem, templateId: VideoTemplateId, forceRetry = false) => {
+    (
+      recording: RecordingLibraryItem,
+      templateId: VideoTemplateId,
+      forceRetry = false,
+      weightKg?: string
+    ) => {
       if (!canRenderTemplate(recording, templateId)) {
         return;
       }
@@ -305,7 +312,7 @@ export function useTemplateRendering(params: {
         return;
       }
 
-      queueRef.current.push({ recording, templateId });
+      queueRef.current.push({ recording, templateId, weightKg });
       setQueuedTemplateIdsByRecording((current) => {
         const nextQueued = current[recording.id] ?? [];
         if (nextQueued.includes(templateId)) {
@@ -342,7 +349,8 @@ export function useTemplateRendering(params: {
     (
       recordingLibraryItems: RecordingLibraryItem[],
       recordingId: string,
-      templateId: VideoTemplateId
+      templateId: VideoTemplateId,
+      options?: { weightKg?: string }
     ) => {
       const targetRecording =
         recordingLibraryItems.find((recording) => recording.id === recordingId) ?? null;
@@ -352,7 +360,7 @@ export function useTemplateRendering(params: {
       }
 
       expandLinkedTemplateIds(templateId).forEach((linkedTemplateId) => {
-        enqueueTemplateRender(targetRecording, linkedTemplateId);
+        enqueueTemplateRender(targetRecording, linkedTemplateId, false, options?.weightKg);
       });
     },
     [enqueueTemplateRender]
@@ -378,7 +386,8 @@ export function useTemplateRendering(params: {
     (
       recordingLibraryItems: RecordingLibraryItem[],
       recordingId: string,
-      templateId: VideoTemplateId
+      templateId: VideoTemplateId,
+      options?: { weightKg?: string }
     ) => {
       const targetRecording =
         recordingLibraryItems.find((recording) => recording.id === recordingId) ?? null;
@@ -388,7 +397,7 @@ export function useTemplateRendering(params: {
       }
 
       expandLinkedTemplateIds(templateId).forEach((linkedTemplateId) => {
-        enqueueTemplateRender(targetRecording, linkedTemplateId, true);
+        enqueueTemplateRender(targetRecording, linkedTemplateId, true, options?.weightKg);
       });
     },
     [enqueueTemplateRender]

@@ -40,6 +40,7 @@ export function TemplateGallery({
         const processingState = processingStates[template.id] ?? null;
         const isQueued = queuedTemplateIds.includes(template.id);
         const needsRepTiming = !!template.requiresRepTiming;
+        const needsWeightInput = !!template.requiresWeightInput;
         const isUnavailable = needsRepTiming && !hasRepTiming;
         const isRendering =
           !!processingState && !processingState.error && processingState.progress < 1;
@@ -159,6 +160,16 @@ export function TemplateGallery({
               </div>
             ) : null}
 
+            {needsWeightInput ? (
+              <div className="template-note">
+                <strong>Weight needed before render</strong>
+                <p className="subtle-copy">
+                  You will be asked for the lifted weight as a number, and the video will show it
+                  automatically in kilograms.
+                </p>
+              </div>
+            ) : null}
+
             {!renderedVersion && hasFailed ? (
               <div className="template-progress-card failed">
                 <div className="panel-header">
@@ -192,7 +203,11 @@ export function TemplateGallery({
                 type="button"
                 onClick={() => onStartRender(template.id)}
               >
-                {isPrimaryFamilyTemplate(template.id) ? "Render Both Cuts" : "Start Render"}
+                {needsWeightInput
+                  ? "Enter Weight & Render"
+                  : isPrimaryFamilyTemplate(template.id)
+                    ? "Render Both Cuts"
+                    : "Start Render"}
               </button>
             ) : (
               <div className="template-status-inline">

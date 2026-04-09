@@ -4,7 +4,9 @@ import { useAppRoute } from "./app/router/useAppRoute";
 import { AuthModal } from "./components/AuthModal";
 import { DebugPanel } from "./components/DebugPanel";
 import { RecordingsModal } from "./components/RecordingsModal";
+import { TemplateWeightModal } from "./components/TemplateWeightModal";
 import { TemplatesModal } from "./components/TemplatesModal";
+import { getVideoTemplates, templateNeedsWeightInput } from "./editing/videoTemplates";
 import { resolvePrototypePhoneAuth } from "./features/auth-by-phone/model/resolvePrototypePhoneAuth";
 import { useUploadedAnalysisFiles } from "./features/analysis-uploads/model/useUploadedAnalysisFiles";
 import {
@@ -25,6 +27,17 @@ import { AnalysisWorkspacePage } from "./pages/AnalysisWorkspacePage";
 import { KioskPage } from "./pages/KioskPage";
 import { SetupPage } from "./pages/SetupPage";
 import { kioskReducer } from "./reducer/kioskReducer";
+import { VideoTemplateId } from "./types";
+
+type PendingTemplateRender = {
+  recordingId: string;
+  templateId: VideoTemplateId;
+  isRetry: boolean;
+} | null;
+
+function normalizeWeightKg(value: string) {
+  return value.replace(/\D/g, "").trim();
+}
 
 export default function App() {
   const [state, dispatch] = usePersistentReducer(
@@ -38,6 +51,8 @@ export default function App() {
   const [isRecordingsOpen, setIsRecordingsOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [pendingTemplateRender, setPendingTemplateRender] =
+    useState<PendingTemplateRender>(null);
 
   const activeUser = useMemo(() => selectActiveUser(state), [state]);
   const selectedExerciseId = useMemo(() => selectSelectedExerciseId(state), [state]);
@@ -165,6 +180,14 @@ export default function App() {
     () => (latestRecording?.id ? queuedTemplateIdsByRecording[latestRecording.id] ?? [] : []),
     [latestRecording?.id, queuedTemplateIdsByRecording]
   );
+  const pendingTemplateDefinition = useMemo(
+    () =>
+      pendingTemplateRender
+        ? getVideoTemplates().find((template) => template.id === pendingTemplateRender.templateId) ??
+          null
+        : null,
+    [pendingTemplateRender]
+  );
 
   const shouldShowRecordingScreen =
     route === "kiosk" &&
@@ -264,6 +287,51 @@ export default function App() {
     }
   };
 
+  const queueTemplateRender = (
+    recordingId: string,
+    templateId: VideoTemplateId,
+    isRetry = false,
+    weightKg?: string
+  ) => {
+    if (isRetry) {
+      retryTemplateRender(recordingLibraryItems, recordingId, templateId, { weightKg });
+      return;
+    }
+
+    startTemplateRender(recordingLibraryItems, recordingId, templateId, { weightKg });
+  };
+
+  const requestTemplateRender = (
+    recordingId: string,
+    templateId: VideoTemplateId,
+    isRetry = false
+  ) => {
+    if (templateNeedsWeightInput(templateId)) {
+      setPendingTemplateRender({ recordingId, templateId, isRetry });
+      return;
+    }
+
+    queueTemplateRender(recordingId, templateId, isRetry);
+  };
+
+  const handleSubmitTemplateWeight = (weightValue: string) => {
+    const normalizedWeightKg = normalizeWeightKg(weightValue);
+    if (!pendingTemplateRender || !normalizedWeightKg) {
+      return;
+    }
+
+    const nextRender = pendingTemplateRender;
+    setPendingTemplateRender(null);
+    window.setTimeout(() => {
+      queueTemplateRender(
+        nextRender.recordingId,
+        nextRender.templateId,
+        nextRender.isRetry,
+        normalizedWeightKg
+      );
+    }, 0);
+  };
+
   return (
     <div className="app-shell">
       <div className="ambient ambient-left" />
@@ -333,11 +401,7 @@ export default function App() {
             queuedTemplateIds={latestRecordingQueuedTemplateIds}
             onStartTemplateRender={(templateId) => {
               if (latestRecordingLibraryItem) {
-                startTemplateRender(
-                  recordingLibraryItems,
-                  latestRecordingLibraryItem.id,
-                  templateId
-                );
+                requestTemplateRender(latestRecordingLibraryItem.id, templateId);
               }
             }}
             onSubmitPhone={handlePhoneSubmit}
@@ -364,11 +428,7 @@ export default function App() {
             }}
             onRetryTemplate={(templateId) => {
               if (latestRecordingLibraryItem) {
-                retryTemplateRender(
-                  recordingLibraryItems,
-                  latestRecordingLibraryItem.id,
-                  templateId
-                );
+                requestTemplateRender(latestRecordingLibraryItem.id, templateId, true);
               }
             }}
             onSwitchUser={(sessionUserId) =>
@@ -405,7 +465,7 @@ export default function App() {
         queuedTemplateIds={latestRecordingQueuedTemplateIds}
         onStartRender={(templateId) => {
           if (latestRecordingLibraryItem) {
-            startTemplateRender(recordingLibraryItems, latestRecordingLibraryItem.id, templateId);
+            requestTemplateRender(latestRecordingLibraryItem.id, templateId);
           }
         }}
         onSelectTemplate={(templateId) => {
@@ -415,10 +475,17 @@ export default function App() {
         }}
         onRetryTemplate={(templateId) => {
           if (latestRecordingLibraryItem) {
-            retryTemplateRender(recordingLibraryItems, latestRecordingLibraryItem.id, templateId);
+            requestTemplateRender(latestRecordingLibraryItem.id, templateId, true);
           }
         }}
         onClose={() => setIsTemplatesOpen(false)}
+      />
+
+      <TemplateWeightModal
+        open={!!pendingTemplateRender}
+        templateName={pendingTemplateDefinition?.name ?? "Primary"}
+        onClose={() => setPendingTemplateRender(null)}
+        onSubmitWeight={handleSubmitTemplateWeight}
       />
 
       <DebugPanel

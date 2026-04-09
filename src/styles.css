@@ -858,6 +858,7 @@ button:disabled {
 .inline-form {
   display: flex;
   gap: 12px;
+  align-items: center;
 }
 
 .inline-form input {
@@ -868,6 +869,19 @@ button:disabled {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
+}
+
+.input-suffix-chip {
+  min-height: 56px;
+  padding: 0 18px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
 }
 
 .warning-toast,
