@@ -2,10 +2,12 @@ import {
   AnalysisMetrics,
   CalibrationState,
   LiveGuidanceCheck,
+  LiveOverlayLine,
   LiveOverlaySegment,
   PoseLandmark2D,
   RecordingAnalysisResult,
   RecordingRepEvent,
+  SquatMetricsSnapshot,
   SupportedExerciseId
 } from "../types";
 
@@ -85,6 +87,8 @@ export interface LiveAnalysisUpdate {
     label: string;
     status: LiveOverlaySegment["status"];
   }>;
+  overlay_lines: LiveOverlayLine[];
+  squat_metrics: SquatMetricsSnapshot;
 }
 
 export interface AnalysisJobResponse {

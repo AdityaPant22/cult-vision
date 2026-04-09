@@ -46,6 +46,8 @@ class LiveAnalysisMessage(BaseModel):
     metrics: Dict[str, int]
     pose_landmarks: List[Dict[str, Union[float, str]]] = Field(default_factory=list)
     overlay_segments: List[Dict[str, str]] = Field(default_factory=list)
+    overlay_lines: List[Dict[str, Union[float, str]]] = Field(default_factory=list)
+    squat_metrics: Dict[str, Union[float, bool, None]] = Field(default_factory=dict)
 
 
 class RepEventPayload(BaseModel):

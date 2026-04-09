@@ -85,6 +85,52 @@ function formatPhaseLabel(phase: string | undefined): string {
     .join(" ");
 }
 
+function formatSquatMetric(
+  value: number | null | undefined,
+  suffix = "",
+  fractionDigits = 1
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
+  }
+
+  return `${value.toFixed(fractionDigits)}${suffix}`;
+}
+
+function getRangeStatus(
+  value: number | null | undefined,
+  min: number,
+  max: number
+): "good" | "bad" | "neutral" {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "neutral";
+  }
+
+  return value >= min && value <= max ? "good" : "bad";
+}
+
+function getMaxStatus(
+  value: number | null | undefined,
+  max: number
+): "good" | "bad" | "neutral" {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "neutral";
+  }
+
+  return value <= max ? "good" : "bad";
+}
+
+function getNearZeroStatus(
+  value: number | null | undefined,
+  tolerance = 0.02
+): "good" | "bad" | "neutral" {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "neutral";
+  }
+
+  return Math.abs(value) <= tolerance ? "good" : "bad";
+}
+
 export function RecordingScreen({
   activeUser,
   recording,
@@ -146,6 +192,47 @@ export function RecordingScreen({
     () => (liveAnalysis?.checks ?? []).filter((check) => check.status === "warn").slice(0, 2),
     [liveAnalysis?.checks]
   );
+  const squatMetrics = exerciseLabel === "Squat" ? liveAnalysis?.squat_metrics ?? null : null;
+  const visibleOverlayLines = useMemo(
+    () => (liveAnalysis?.overlay_lines ?? []).filter(() => false),
+    [liveAnalysis?.overlay_lines]
+  );
+  const squatDashboard = useMemo(
+    () =>
+      exerciseLabel === "Squat"
+        ? [
+            {
+              id: "crotch-angle",
+              label: "Crotch angle",
+              value: formatSquatMetric(squatMetrics?.crotch_angle, "°"),
+              hint: "Ideal 25°-40°",
+              status: getRangeStatus(squatMetrics?.crotch_angle, 25, 40)
+            },
+            {
+              id: "feet-shoulder-ratio",
+              label: "Feet / shoulder",
+              value: formatSquatMetric(squatMetrics?.feet_width_ratio, "x", 2),
+              hint: "Ideal 0.75-1.25",
+              status: getRangeStatus(squatMetrics?.feet_width_ratio, 0.75, 1.25)
+            },
+            {
+              id: "bar-midfoot-offset",
+              label: "Bar / midfoot",
+              value: formatSquatMetric(squatMetrics?.midfoot_bar_offset, "", 3),
+              hint: "Ideal 0",
+              status: getNearZeroStatus(squatMetrics?.midfoot_bar_offset)
+            },
+            {
+              id: "elbow-body-angle",
+              label: "Elbow to body",
+              value: formatSquatMetric(squatMetrics?.elbow_body_parallel_angle, "°"),
+              hint: "Ideal under 30°",
+              status: getMaxStatus(squatMetrics?.elbow_body_parallel_angle, 30)
+            }
+          ]
+        : [],
+    [exerciseLabel, squatMetrics]
+  );
 
   useEffect(() => {
     if (!videoRef.current) {
@@ -201,7 +288,7 @@ export function RecordingScreen({
                     muted
                     playsInline
                   />
-                  {!isCountingDown && (liveAnalysis?.pose_landmarks.length ?? 0) > 0 ? (
+                  {(liveAnalysis?.pose_landmarks.length ?? 0) > 0 ? (
                     <svg
                       className="pose-overlay"
                       viewBox="0 0 100 100"
@@ -249,6 +336,17 @@ export function RecordingScreen({
                           />
                         );
                       })}
+
+                      {visibleOverlayLines.map((line) => (
+                        <line
+                          key={line.id}
+                          className={`pose-line pose-line-metric pose-line-${line.kind}`}
+                          x1={line.x1 * 100}
+                          y1={line.y1 * 100}
+                          x2={line.x2 * 100}
+                          y2={line.y2 * 100}
+                        />
+                      ))}
                     </svg>
                   ) : null}
 
@@ -270,6 +368,27 @@ export function RecordingScreen({
 
         <aside className="recording-side-panel">
           <div className="live-analysis-card live-analysis-card-wide">
+            {exerciseLabel === "Squat" ? (
+              <div className="squat-dashboard-card">
+                <div className="panel-header panel-header-compact">
+                  <div>
+                    <p className="eyebrow">Squat Dashboard</p>
+                    <h3>Live setup checks</h3>
+                  </div>
+                </div>
+
+                <div className="squat-dashboard-grid">
+                  {squatDashboard.map((metric) => (
+                    <div key={metric.id} className={`dashboard-metric-card ${metric.status}`}>
+                      <span className="label">{metric.label}</span>
+                      <strong>{metric.value}</strong>
+                      <small>{metric.hint}</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Live Guidance</p>
@@ -323,6 +442,7 @@ export function RecordingScreen({
                 </div>
               ) : null}
             </div>
+
           </div>
 
           <div className="recording-controls-card">

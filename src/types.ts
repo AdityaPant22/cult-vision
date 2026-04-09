@@ -106,6 +106,29 @@ export interface LiveOverlaySegment {
   status: OverlaySegmentStatus;
 }
 
+export type OverlayLineKind = "reference" | "bar" | "limb" | "torso";
+
+export interface LiveOverlayLine {
+  id: string;
+  label: string;
+  kind: OverlayLineKind;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface SquatMetricsSnapshot {
+  crotch_angle: number | null;
+  shoulder_width: number | null;
+  feet_width: number | null;
+  feet_width_ratio: number | null;
+  torso_vs_vertical_angle: number | null;
+  midfoot_bar_offset: number | null;
+  elbow_body_parallel_angle: number | null;
+  bar_center_detected: boolean;
+}
+
 export type VideoTemplateId = "gym-highlight" | "rep-bingo";
 
 export interface EditedRecordingVersion {

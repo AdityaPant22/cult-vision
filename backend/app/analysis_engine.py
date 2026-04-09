@@ -102,6 +102,8 @@ class ExerciseSummary:
     selected_exercise: str | None = None
     pose_landmarks: list[dict[str, float | str]] = field(default_factory=list)
     overlay_segments: list[dict[str, str]] = field(default_factory=list)
+    overlay_lines: list[dict[str, float | str]] = field(default_factory=list)
+    squat_metrics: dict[str, float | bool | None] = field(default_factory=dict)
     feedback_items: list[str] = field(default_factory=list)
     checks: list[dict[str, float | int | str]] = field(default_factory=list)
     primary_cues: list[str] = field(default_factory=list)
@@ -135,17 +137,65 @@ class LiveCheckMemory:
 
 
 @dataclass
+class OverlayLine:
+    id: str
+    label: str
+    kind: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+@dataclass
+class SquatMetricSnapshot:
+    crotch_angle: float | None = None
+    shoulder_width: float | None = None
+    feet_width: float | None = None
+    feet_width_ratio: float | None = None
+    torso_vs_vertical_angle: float | None = None
+    midfoot_bar_offset: float | None = None
+    elbow_body_parallel_angle: float | None = None
+    bar_center_detected: bool = False
+
+    def as_payload(self) -> dict[str, float | bool | None]:
+        return {
+            "crotch_angle": round(self.crotch_angle, 1) if self.crotch_angle is not None else None,
+            "shoulder_width": round(self.shoulder_width, 3) if self.shoulder_width is not None else None,
+            "feet_width": round(self.feet_width, 3) if self.feet_width is not None else None,
+            "feet_width_ratio": round(self.feet_width_ratio, 2) if self.feet_width_ratio is not None else None,
+            "torso_vs_vertical_angle": round(self.torso_vs_vertical_angle, 1)
+            if self.torso_vs_vertical_angle is not None
+            else None,
+            "midfoot_bar_offset": round(self.midfoot_bar_offset, 3)
+            if self.midfoot_bar_offset is not None
+            else None,
+            "elbow_body_parallel_angle": round(self.elbow_body_parallel_angle, 1)
+            if self.elbow_body_parallel_angle is not None
+            else None,
+            "bar_center_detected": self.bar_center_detected,
+        }
+
+
+@dataclass
 class CalibrationProfile:
     observed_frames: int = 0
     visibility_samples: deque = field(default_factory=lambda: deque(maxlen=18))
     torso_angle_samples: deque = field(default_factory=lambda: deque(maxlen=18))
     limb_scale_samples: deque = field(default_factory=lambda: deque(maxlen=18))
+    gravity_vector_samples: deque = field(default_factory=lambda: deque(maxlen=18))
+    shoulder_width_samples: deque = field(default_factory=lambda: deque(maxlen=18))
+    hip_center_samples: deque = field(default_factory=lambda: deque(maxlen=18))
     frozen_torso_angle: float | None = None
     frozen_limb_scale: float | None = None
+    frozen_gravity_direction: tuple[float, float] | None = None
+    frozen_shoulder_width: float | None = None
+    frozen_hip_center: tuple[float, float] | None = None
 
     def observe(
         self,
         landmarks: dict[str, PosePoint],
+        world_landmarks: dict[str, PosePoint],
         metrics: FrameMetrics,
         visibility_count: int,
     ) -> None:
@@ -167,6 +217,18 @@ class CalibrationProfile:
                 (shoulder_mid.x - hip_mid.x) ** 2 + (shoulder_mid.y - hip_mid.y) ** 2
             )
             self.limb_scale_samples.append(torso_length * 100)
+            gravity_vector = normalize_vector_2d(
+                hip_mid.x - shoulder_mid.x,
+                hip_mid.y - shoulder_mid.y,
+            )
+            if gravity_vector is not None:
+                self.gravity_vector_samples.append(gravity_vector)
+            self.hip_center_samples.append((hip_mid.x, hip_mid.y))
+
+        world_left_shoulder = maybe_point(world_landmarks, "left_shoulder")
+        world_right_shoulder = maybe_point(world_landmarks, "right_shoulder")
+        if world_left_shoulder and world_right_shoulder:
+            self.shoulder_width_samples.append(distance_3d(world_left_shoulder, world_right_shoulder))
 
     @property
     def neutral_torso_angle(self) -> float | None:
@@ -183,11 +245,35 @@ class CalibrationProfile:
         return average(values)
 
     @property
+    def gravity_direction(self) -> tuple[float, float] | None:
+        if self.frozen_gravity_direction is not None:
+            return self.frozen_gravity_direction
+        return average_direction(list(self.gravity_vector_samples))
+
+    @property
+    def standing_shoulder_width(self) -> float | None:
+        if self.frozen_shoulder_width is not None:
+            return self.frozen_shoulder_width
+        return average(list(self.shoulder_width_samples))
+
+    @property
+    def standing_hip_center(self) -> tuple[float, float] | None:
+        if self.frozen_hip_center is not None:
+            return self.frozen_hip_center
+        return average_point_2d(list(self.hip_center_samples))
+
+    @property
     def state(self) -> str:
         avg_visibility = average(list(self.visibility_samples)) or 0.0
         if self.observed_frames < 6:
             return "warming_up"
-        if avg_visibility < 10 or self.neutral_torso_angle is None or self.limb_scale is None:
+        if (
+            avg_visibility < 10
+            or self.neutral_torso_angle is None
+            or self.limb_scale is None
+            or self.gravity_direction is None
+            or self.standing_shoulder_width is None
+        ):
             return "weak"
         return "ready"
 
@@ -206,6 +292,12 @@ class CalibrationProfile:
             self.frozen_torso_angle = self.neutral_torso_angle
         if self.frozen_limb_scale is None:
             self.frozen_limb_scale = self.limb_scale
+        if self.frozen_gravity_direction is None:
+            self.frozen_gravity_direction = self.gravity_direction
+        if self.frozen_shoulder_width is None:
+            self.frozen_shoulder_width = self.standing_shoulder_width
+        if self.frozen_hip_center is None:
+            self.frozen_hip_center = self.standing_hip_center
 
 
 def ensure_model_file() -> Path:
@@ -256,6 +348,156 @@ def midpoint(a: PosePoint, b: PosePoint) -> PosePoint:
         z=(a.z + b.z) / 2,
         visibility=min(a.visibility, b.visibility),
     )
+
+
+def average_point_2d(points: Iterable[tuple[float, float] | None]) -> tuple[float, float] | None:
+    valid = [point for point in points if point is not None]
+    if not valid:
+        return None
+    sum_x = sum(point[0] for point in valid)
+    sum_y = sum(point[1] for point in valid)
+    return (sum_x / len(valid), sum_y / len(valid))
+
+
+def normalize_vector_2d(dx: float, dy: float) -> tuple[float, float] | None:
+    magnitude = math.sqrt(dx**2 + dy**2)
+    if magnitude == 0:
+        return None
+    return (dx / magnitude, dy / magnitude)
+
+
+def average_direction(vectors: Iterable[tuple[float, float] | None]) -> tuple[float, float] | None:
+    valid = [vector for vector in vectors if vector is not None]
+    if not valid:
+        return None
+    avg_dx = sum(vector[0] for vector in valid) / len(valid)
+    avg_dy = sum(vector[1] for vector in valid) / len(valid)
+    return normalize_vector_2d(avg_dx, avg_dy)
+
+
+def distance_3d(a: PosePoint, b: PosePoint) -> float:
+    return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
+
+
+def distance_xz(a: PosePoint, b: PosePoint) -> float:
+    return math.sqrt((a.x - b.x) ** 2 + (a.z - b.z) ** 2)
+
+
+def vector_between(a: PosePoint, b: PosePoint) -> tuple[float, float, float]:
+    return (b.x - a.x, b.y - a.y, b.z - a.z)
+
+
+def vector_length_3d(vector: tuple[float, float, float]) -> float:
+    return math.sqrt(vector[0] ** 2 + vector[1] ** 2 + vector[2] ** 2)
+
+
+def normalize_vector_3d(vector: tuple[float, float, float]) -> tuple[float, float, float] | None:
+    magnitude = vector_length_3d(vector)
+    if magnitude == 0:
+        return None
+    return (vector[0] / magnitude, vector[1] / magnitude, vector[2] / magnitude)
+
+
+def angle_between_vectors(
+    first: tuple[float, float, float],
+    second: tuple[float, float, float],
+) -> float | None:
+    first_norm = normalize_vector_3d(first)
+    second_norm = normalize_vector_3d(second)
+    if first_norm is None or second_norm is None:
+        return None
+    dot = (
+        first_norm[0] * second_norm[0]
+        + first_norm[1] * second_norm[1]
+        + first_norm[2] * second_norm[2]
+    )
+    return math.degrees(math.acos(clamp(dot, -1.0, 1.0)))
+
+
+def project_to_plane(
+    vector: tuple[float, float, float],
+    normal: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    normal_norm = normalize_vector_3d(normal)
+    if normal_norm is None:
+        return vector
+    dot = (
+        vector[0] * normal_norm[0]
+        + vector[1] * normal_norm[1]
+        + vector[2] * normal_norm[2]
+    )
+    return (
+        vector[0] - dot * normal_norm[0],
+        vector[1] - dot * normal_norm[1],
+        vector[2] - dot * normal_norm[2],
+    )
+
+
+def clamp01(value: float) -> float:
+    return clamp(value, 0.0, 1.0)
+
+
+def build_centered_line(
+    center: tuple[float, float],
+    direction: tuple[float, float] | None,
+    half_length: float,
+) -> tuple[float, float, float, float] | None:
+    if direction is None:
+        return None
+    norm = normalize_vector_2d(direction[0], direction[1])
+    if norm is None:
+        return None
+    return (
+        clamp01(center[0] - norm[0] * half_length),
+        clamp01(center[1] - norm[1] * half_length),
+        clamp01(center[0] + norm[0] * half_length),
+        clamp01(center[1] + norm[1] * half_length),
+    )
+
+
+def build_directed_line(
+    start: tuple[float, float],
+    direction: tuple[float, float] | None,
+    length: float,
+) -> tuple[float, float, float, float] | None:
+    if direction is None:
+        return None
+    norm = normalize_vector_2d(direction[0], direction[1])
+    if norm is None:
+        return None
+    return (
+        clamp01(start[0]),
+        clamp01(start[1]),
+        clamp01(start[0] + norm[0] * length),
+        clamp01(start[1] + norm[1] * length),
+    )
+
+
+def angle_between_vectors_2d(
+    first: tuple[float, float],
+    second: tuple[float, float],
+    acute: bool = False,
+) -> float | None:
+    first_norm = normalize_vector_2d(first[0], first[1])
+    second_norm = normalize_vector_2d(second[0], second[1])
+    if first_norm is None or second_norm is None:
+        return None
+    dot = first_norm[0] * second_norm[0] + first_norm[1] * second_norm[1]
+    if acute:
+        dot = abs(dot)
+    return math.degrees(math.acos(clamp(dot, -1.0, 1.0)))
+
+
+def overlay_line_payload(line: OverlayLine) -> dict[str, float | str]:
+    return {
+        "id": line.id,
+        "label": line.label,
+        "kind": line.kind,
+        "x1": round(line.x1, 4),
+        "y1": round(line.y1, 4),
+        "x2": round(line.x2, 4),
+        "y2": round(line.y2, 4),
+    }
 
 
 def maybe_point(landmarks: dict[str, PosePoint], name: str) -> PosePoint | None:
@@ -774,6 +1016,112 @@ def serialize_pose_landmarks(landmarks: dict[str, PosePoint]) -> list[dict[str, 
     ]
 
 
+def pick_visible_side(
+    landmarks: dict[str, PosePoint],
+    landmark_names: tuple[str, ...] = ("shoulder", "elbow", "wrist"),
+) -> str:
+    side_scores: dict[str, float] = {"left": 0.0, "right": 0.0}
+    for side in ("left", "right"):
+        for name in landmark_names:
+            point = landmarks.get(f"{side}_{name}")
+            if point is not None:
+                side_scores[side] += point.visibility
+    return "left" if side_scores["left"] >= side_scores["right"] else "right"
+
+
+def compute_squat_crotch_angle(world_landmarks: dict[str, PosePoint]) -> float | None:
+    left_hip = maybe_point(world_landmarks, "left_hip")
+    right_hip = maybe_point(world_landmarks, "right_hip")
+    left_knee = maybe_point(world_landmarks, "left_knee")
+    right_knee = maybe_point(world_landmarks, "right_knee")
+    left_shoulder = maybe_point(world_landmarks, "left_shoulder")
+    right_shoulder = maybe_point(world_landmarks, "right_shoulder")
+
+    if not all([left_hip, right_hip, left_knee, right_knee, left_shoulder, right_shoulder]):
+        return None
+
+    pelvis_center = midpoint(left_hip, right_hip)
+    shoulder_mid = midpoint(left_shoulder, right_shoulder)
+    lateral_axis = vector_between(left_hip, right_hip)
+    vertical_axis = vector_between(pelvis_center, shoulder_mid)
+    frontal_normal = (
+        lateral_axis[1] * vertical_axis[2] - lateral_axis[2] * vertical_axis[1],
+        lateral_axis[2] * vertical_axis[0] - lateral_axis[0] * vertical_axis[2],
+        lateral_axis[0] * vertical_axis[1] - lateral_axis[1] * vertical_axis[0],
+    )
+
+    left_vector = project_to_plane(vector_between(pelvis_center, left_knee), frontal_normal)
+    right_vector = project_to_plane(vector_between(pelvis_center, right_knee), frontal_normal)
+    return angle_between_vectors(left_vector, right_vector)
+
+
+def detect_barbell_end_center(
+    image_rgb: np.ndarray,
+    landmarks: dict[str, PosePoint],
+    preferred_side: str,
+) -> tuple[float, float] | None:
+    frame_height, frame_width = image_rgb.shape[:2]
+    shoulder = maybe_point(landmarks, f"{preferred_side}_shoulder")
+    wrist = maybe_point(landmarks, f"{preferred_side}_wrist")
+    elbow = maybe_point(landmarks, f"{preferred_side}_elbow")
+
+    anchor = shoulder or wrist or elbow
+    if anchor is None:
+        return None
+
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    gray = cv2.GaussianBlur(gray, (9, 9), 1.4)
+
+    shoulder_x = int((shoulder.x if shoulder else anchor.x) * frame_width)
+    shoulder_y = int((shoulder.y if shoulder else anchor.y) * frame_height)
+    wrist_x = int((wrist.x if wrist else anchor.x) * frame_width)
+    lateral_anchor_x = shoulder_x if shoulder is not None else wrist_x
+
+    if preferred_side == "left":
+        roi_left = 0
+        roi_right = min(frame_width, lateral_anchor_x + int(frame_width * 0.12))
+    else:
+        roi_left = max(0, lateral_anchor_x - int(frame_width * 0.12))
+        roi_right = frame_width
+
+    roi_top = max(0, shoulder_y - int(frame_height * 0.22))
+    roi_bottom = min(frame_height, shoulder_y + int(frame_height * 0.2))
+    if roi_right - roi_left < 32 or roi_bottom - roi_top < 32:
+        return None
+
+    roi_gray = gray[roi_top:roi_bottom, roi_left:roi_right]
+    circles = cv2.HoughCircles(
+        roi_gray,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=max(24, int(min(roi_gray.shape[:2]) * 0.22)),
+        param1=110,
+        param2=22,
+        minRadius=max(10, int(min(roi_gray.shape[:2]) * 0.08)),
+        maxRadius=max(18, int(min(roi_gray.shape[:2]) * 0.42)),
+    )
+    if circles is None:
+        return None
+
+    best_score = -1.0
+    best_center: tuple[float, float] | None = None
+    anchor_x = anchor.x * frame_width
+    anchor_y = anchor.y * frame_height
+    expected_direction = -1 if preferred_side == "left" else 1
+
+    for cx, cy, radius in np.round(circles[0]).astype(int):
+        absolute_x = roi_left + cx
+        absolute_y = roi_top + cy
+        direction_score = (absolute_x - anchor_x) * expected_direction
+        vertical_gap = abs(absolute_y - anchor_y)
+        score = radius * 2.4 + max(0.0, direction_score) * 0.32 - vertical_gap * 0.16
+        if score > best_score:
+            best_score = score
+            best_center = (absolute_x / frame_width, absolute_y / frame_height)
+
+    return best_center
+
+
 def positive_guidance_message(exercise: str) -> str:
     if exercise == "Squat":
         return "Looks good. Keep driving evenly."
@@ -1162,6 +1510,25 @@ class LivePoseAnalyzerSession:
         self.calibration = CalibrationProfile()
         self.check_memory: dict[str, LiveCheckMemory] = {}
         self.current_mode = "calibration"
+        self.squat_metric_history: dict[str, deque] = {
+            "crotch_angle": deque(maxlen=8),
+            "shoulder_width": deque(maxlen=8),
+            "feet_width": deque(maxlen=8),
+            "feet_width_ratio": deque(maxlen=8),
+            "torso_vs_vertical_angle": deque(maxlen=8),
+            "midfoot_bar_offset": deque(maxlen=8),
+            "elbow_body_parallel_angle": deque(maxlen=8),
+        }
+        self.squat_point_history: dict[str, deque] = {
+            "left_midfoot": deque(maxlen=6),
+            "right_midfoot": deque(maxlen=6),
+            "shoulder_mid": deque(maxlen=6),
+            "hip_mid": deque(maxlen=6),
+            "visible_wrist": deque(maxlen=6),
+            "visible_elbow": deque(maxlen=6),
+        }
+        self.bar_center: tuple[float, float] | None = None
+        self.bar_center_misses = 0
         self.landmarker = self._create_landmarker()
 
     def _create_landmarker(self) -> vision.PoseLandmarker:
@@ -1186,6 +1553,299 @@ class LivePoseAnalyzerSession:
         future = self.pending.pop(timestamp_ms, None)
         if future and not future.done():
             self.loop.call_soon_threadsafe(future.set_result, result)
+
+    def _reset_squat_geometry(self) -> None:
+        for history in self.squat_metric_history.values():
+            history.clear()
+        for history in self.squat_point_history.values():
+            history.clear()
+        self.bar_center = None
+        self.bar_center_misses = 0
+
+    def _smooth_numeric_value(self, key: str, value: float | None) -> float | None:
+        history = self.squat_metric_history[key]
+        if value is not None and math.isfinite(value):
+            history.append(value)
+        return average(list(history))
+
+    def _smooth_point_value(
+        self,
+        key: str,
+        value: tuple[float, float] | None,
+    ) -> tuple[float, float] | None:
+        history = self.squat_point_history[key]
+        if value is not None:
+            history.append(value)
+        return average_point_2d(list(history))
+
+    def _smooth_bar_center(self, value: tuple[float, float] | None) -> tuple[float, float] | None:
+        if value is None:
+            self.bar_center_misses += 1
+            if self.bar_center_misses > 4:
+                self.bar_center = None
+            return self.bar_center
+
+        if self.bar_center is None:
+            self.bar_center = value
+        else:
+            self.bar_center = (
+                self.bar_center[0] * 0.58 + value[0] * 0.42,
+                self.bar_center[1] * 0.58 + value[1] * 0.42,
+            )
+        self.bar_center_misses = 0
+        return self.bar_center
+
+    def _build_squat_geometry(
+        self,
+        image_rgb: np.ndarray,
+        landmarks: dict[str, PosePoint],
+        world_landmarks: dict[str, PosePoint],
+        visibility_count: int,
+    ) -> tuple[SquatMetricSnapshot, list[dict[str, float | str]]]:
+        if visibility_count < 8:
+            return SquatMetricSnapshot(), []
+        if self.current_mode == "recording" and self.calibration.state == "weak":
+            return SquatMetricSnapshot(), []
+
+        gravity_direction = self.calibration.gravity_direction
+        if gravity_direction is None:
+            return SquatMetricSnapshot(), []
+
+        left_shoulder_2d = maybe_point(landmarks, "left_shoulder")
+        right_shoulder_2d = maybe_point(landmarks, "right_shoulder")
+        left_hip_2d = maybe_point(landmarks, "left_hip")
+        right_hip_2d = maybe_point(landmarks, "right_hip")
+        left_heel_2d = maybe_point(landmarks, "left_heel")
+        right_heel_2d = maybe_point(landmarks, "right_heel")
+        left_foot_index_2d = maybe_point(landmarks, "left_foot_index")
+        right_foot_index_2d = maybe_point(landmarks, "right_foot_index")
+
+        left_midfoot_2d = (
+            ((left_heel_2d.x + left_foot_index_2d.x) / 2, (left_heel_2d.y + left_foot_index_2d.y) / 2)
+            if left_heel_2d and left_foot_index_2d
+            else None
+        )
+        right_midfoot_2d = (
+            ((right_heel_2d.x + right_foot_index_2d.x) / 2, (right_heel_2d.y + right_foot_index_2d.y) / 2)
+            if right_heel_2d and right_foot_index_2d
+            else None
+        )
+        shoulder_mid_2d = (
+            ((left_shoulder_2d.x + right_shoulder_2d.x) / 2, (left_shoulder_2d.y + right_shoulder_2d.y) / 2)
+            if left_shoulder_2d and right_shoulder_2d
+            else None
+        )
+        hip_mid_2d = (
+            ((left_hip_2d.x + right_hip_2d.x) / 2, (left_hip_2d.y + right_hip_2d.y) / 2)
+            if left_hip_2d and right_hip_2d
+            else None
+        )
+
+        visible_side = pick_visible_side(landmarks)
+        visible_wrist = maybe_point(landmarks, f"{visible_side}_wrist")
+        visible_elbow = maybe_point(landmarks, f"{visible_side}_elbow")
+        smoothed_left_midfoot = self._smooth_point_value("left_midfoot", left_midfoot_2d)
+        smoothed_right_midfoot = self._smooth_point_value("right_midfoot", right_midfoot_2d)
+        smoothed_shoulder_mid = self._smooth_point_value("shoulder_mid", shoulder_mid_2d)
+        smoothed_hip_mid = self._smooth_point_value("hip_mid", hip_mid_2d)
+        smoothed_visible_wrist = self._smooth_point_value(
+            "visible_wrist",
+            (visible_wrist.x, visible_wrist.y) if visible_wrist else None,
+        )
+        smoothed_visible_elbow = self._smooth_point_value(
+            "visible_elbow",
+            (visible_elbow.x, visible_elbow.y) if visible_elbow else None,
+        )
+
+        left_shoulder_world = maybe_point(world_landmarks, "left_shoulder")
+        right_shoulder_world = maybe_point(world_landmarks, "right_shoulder")
+        left_heel_world = maybe_point(world_landmarks, "left_heel")
+        right_heel_world = maybe_point(world_landmarks, "right_heel")
+        left_foot_index_world = maybe_point(world_landmarks, "left_foot_index")
+        right_foot_index_world = maybe_point(world_landmarks, "right_foot_index")
+
+        shoulder_width = (
+            distance_3d(left_shoulder_world, right_shoulder_world)
+            if left_shoulder_world and right_shoulder_world
+            else None
+        )
+        left_midfoot_world = (
+            midpoint(left_heel_world, left_foot_index_world)
+            if left_heel_world and left_foot_index_world
+            else None
+        )
+        right_midfoot_world = (
+            midpoint(right_heel_world, right_foot_index_world)
+            if right_heel_world and right_foot_index_world
+            else None
+        )
+        feet_width = (
+            distance_xz(left_midfoot_world, right_midfoot_world)
+            if left_midfoot_world and right_midfoot_world
+            else None
+        )
+        baseline_shoulder_width = self.calibration.standing_shoulder_width or shoulder_width
+        feet_width_ratio = (
+            feet_width / baseline_shoulder_width
+            if feet_width is not None and baseline_shoulder_width not in (None, 0)
+            else None
+        )
+        crotch_angle = compute_squat_crotch_angle(world_landmarks)
+
+        torso_vs_vertical_angle = None
+        torso_direction: tuple[float, float] | None = None
+        if smoothed_shoulder_mid and smoothed_hip_mid:
+            torso_direction = normalize_vector_2d(
+                smoothed_hip_mid[0] - smoothed_shoulder_mid[0],
+                smoothed_hip_mid[1] - smoothed_shoulder_mid[1],
+            )
+            if torso_direction is not None:
+                torso_vs_vertical_angle = math.degrees(
+                    math.acos(
+                        clamp(
+                            torso_direction[0] * gravity_direction[0] + torso_direction[1] * gravity_direction[1],
+                            -1.0,
+                            1.0,
+                        )
+                    )
+                )
+
+        elbow_body_parallel_angle = None
+        if smoothed_visible_wrist and smoothed_visible_elbow and torso_direction is not None:
+            elbow_body_parallel_angle = angle_between_vectors_2d(
+                (
+                    smoothed_visible_elbow[0] - smoothed_visible_wrist[0],
+                    smoothed_visible_elbow[1] - smoothed_visible_wrist[1],
+                ),
+                torso_direction,
+                acute=True,
+            )
+
+        snapshot = SquatMetricSnapshot(
+            crotch_angle=self._smooth_numeric_value("crotch_angle", crotch_angle),
+            shoulder_width=self._smooth_numeric_value("shoulder_width", shoulder_width),
+            feet_width=self._smooth_numeric_value("feet_width", feet_width),
+            feet_width_ratio=self._smooth_numeric_value("feet_width_ratio", feet_width_ratio),
+            torso_vs_vertical_angle=self._smooth_numeric_value(
+                "torso_vs_vertical_angle",
+                torso_vs_vertical_angle,
+            ),
+            midfoot_bar_offset=None,
+            elbow_body_parallel_angle=self._smooth_numeric_value(
+                "elbow_body_parallel_angle",
+                elbow_body_parallel_angle,
+            ),
+        )
+
+        bar_detection = detect_barbell_end_center(image_rgb, landmarks, visible_side)
+        smoothed_bar_center = self._smooth_bar_center(bar_detection)
+        snapshot.bar_center_detected = smoothed_bar_center is not None
+        visible_midfoot = smoothed_left_midfoot if visible_side == "left" else smoothed_right_midfoot
+        if visible_midfoot is not None and smoothed_bar_center is not None:
+            ground_normal = normalize_vector_2d(-gravity_direction[1], gravity_direction[0])
+            if ground_normal is not None:
+                midfoot_bar_offset = abs(
+                    (smoothed_bar_center[0] - visible_midfoot[0]) * ground_normal[0]
+                    + (smoothed_bar_center[1] - visible_midfoot[1]) * ground_normal[1]
+                )
+                snapshot.midfoot_bar_offset = self._smooth_numeric_value(
+                    "midfoot_bar_offset",
+                    midfoot_bar_offset,
+                )
+
+        overlay_lines: list[OverlayLine] = []
+
+        if smoothed_left_midfoot:
+            left_line = build_centered_line(smoothed_left_midfoot, gravity_direction, 0.18)
+            if left_line is not None:
+                overlay_lines.append(
+                    OverlayLine(
+                        id="left-midfoot-line",
+                        label="Left midfoot",
+                        kind="reference",
+                        x1=left_line[0],
+                        y1=left_line[1],
+                        x2=left_line[2],
+                        y2=left_line[3],
+                    )
+                )
+
+        if smoothed_right_midfoot:
+            right_line = build_centered_line(smoothed_right_midfoot, gravity_direction, 0.18)
+            if right_line is not None:
+                overlay_lines.append(
+                    OverlayLine(
+                        id="right-midfoot-line",
+                        label="Right midfoot",
+                        kind="reference",
+                        x1=right_line[0],
+                        y1=right_line[1],
+                        x2=right_line[2],
+                        y2=right_line[3],
+                    )
+                )
+
+        if smoothed_bar_center:
+            bar_line = build_centered_line(smoothed_bar_center, gravity_direction, 0.26)
+            if bar_line is not None:
+                overlay_lines.append(
+                    OverlayLine(
+                        id="bar-center-line",
+                        label="Bar center",
+                        kind="bar",
+                        x1=bar_line[0],
+                        y1=bar_line[1],
+                        x2=bar_line[2],
+                        y2=bar_line[3],
+                    )
+                )
+
+        if smoothed_visible_wrist and smoothed_visible_elbow:
+            elbow_line = build_directed_line(
+                smoothed_visible_wrist,
+                (
+                    smoothed_visible_elbow[0] - smoothed_visible_wrist[0],
+                    smoothed_visible_elbow[1] - smoothed_visible_wrist[1],
+                ),
+                0.2,
+            )
+            if elbow_line is not None:
+                overlay_lines.append(
+                    OverlayLine(
+                        id="elbow-line",
+                        label="Elbow line",
+                        kind="limb",
+                        x1=elbow_line[0],
+                        y1=elbow_line[1],
+                        x2=elbow_line[2],
+                        y2=elbow_line[3],
+                    )
+                )
+
+        if smoothed_shoulder_mid and smoothed_hip_mid and torso_direction is not None:
+            torso_center = (
+                (smoothed_shoulder_mid[0] + smoothed_hip_mid[0]) / 2,
+                (smoothed_shoulder_mid[1] + smoothed_hip_mid[1]) / 2,
+            )
+            torso_line = build_centered_line(
+                torso_center,
+                torso_direction,
+                0.2,
+            )
+            if torso_line is not None:
+                overlay_lines.append(
+                    OverlayLine(
+                        id="torso-line",
+                        label="Torso line",
+                        kind="torso",
+                        x1=torso_line[0],
+                        y1=torso_line[1],
+                        x2=torso_line[2],
+                        y2=torso_line[3],
+                    )
+                )
+
+        return snapshot, [overlay_line_payload(line) for line in overlay_lines]
 
     def _serialize_checks(self) -> list[dict[str, float | int | str]]:
         ordered = sorted(
@@ -1315,11 +1975,12 @@ class LivePoseAnalyzerSession:
         self.pending[timestamp_ms] = future
         self.landmarker.detect_async(mp_image, timestamp_ms)
         result: vision.PoseLandmarkerResult = await asyncio.wait_for(future, timeout=2.0)
-        return self._summarize_result(result, timestamp_ms, analysis_mode)
+        return self._summarize_result(result, image_rgb, timestamp_ms, analysis_mode)
 
     def _summarize_result(
         self,
         result: vision.PoseLandmarkerResult,
+        image_rgb: np.ndarray,
         timestamp_ms: int,
         analysis_mode: str,
     ) -> ExerciseSummary:
@@ -1327,6 +1988,7 @@ class LivePoseAnalyzerSession:
             self.calibration.freeze()
             self.tracker.reset_recording_window()
             self.check_memory = {}
+            self._reset_squat_geometry()
         self.current_mode = analysis_mode
 
         if not result.pose_landmarks:
@@ -1369,8 +2031,28 @@ class LivePoseAnalyzerSession:
             for landmark in result.pose_landmarks[0]
             if getattr(landmark, "visibility", 0.0) > 0.35
         )
+        world_landmarks = {
+            name: PosePoint(
+                x=landmark.x,
+                y=landmark.y,
+                z=landmark.z,
+                visibility=getattr(landmark, "visibility", getattr(result.pose_landmarks[0][index], "visibility", 0.0)),
+            )
+            for index, (name, landmark) in enumerate(
+                zip(POSE_NAMES, result.pose_world_landmarks[0] if result.pose_world_landmarks else [])
+            )
+        }
         metrics = metrics_from_landmarks(landmarks, timestamp_ms)
-        self.calibration.observe(landmarks, metrics, visibility_count)
+        self.calibration.observe(landmarks, world_landmarks, metrics, visibility_count)
+        squat_snapshot = SquatMetricSnapshot()
+        squat_overlay_lines: list[dict[str, float | str]] = []
+        if self.selected_exercise == "Squat":
+            squat_snapshot, squat_overlay_lines = self._build_squat_geometry(
+                image_rgb,
+                landmarks,
+                world_landmarks,
+                visibility_count,
+            )
 
         if analysis_mode == "calibration":
             primary_cues = countdown_guidance_message(self.calibration)
@@ -1386,6 +2068,8 @@ class LivePoseAnalyzerSession:
                 rep_events=[],
                 selected_exercise=self.selected_exercise,
                 pose_landmarks=serialize_pose_landmarks(landmarks),
+                overlay_lines=squat_overlay_lines,
+                squat_metrics=squat_snapshot.as_payload(),
                 feedback_items=primary_cues,
                 primary_cues=primary_cues,
                 guidance_confidence=self.calibration.guidance_confidence,
@@ -1416,6 +2100,8 @@ class LivePoseAnalyzerSession:
         summary.selected_exercise = guided_exercise
         summary.pose_landmarks = serialize_pose_landmarks(landmarks)
         summary.overlay_segments = overlay_segments
+        summary.overlay_lines = squat_overlay_lines if guided_exercise == "Squat" else []
+        summary.squat_metrics = squat_snapshot.as_payload() if guided_exercise == "Squat" else {}
         summary.feedback_items = primary_cues
         summary.checks = checks
         summary.primary_cues = primary_cues

@@ -570,6 +570,8 @@ async def live_analysis_socket(
                 metrics=summary.metrics,
                 pose_landmarks=summary.pose_landmarks,
                 overlay_segments=summary.overlay_segments,
+                overlay_lines=summary.overlay_lines,
+                squat_metrics=summary.squat_metrics,
             )
             await websocket.send_json(response.model_dump())
     except WebSocketDisconnect:
