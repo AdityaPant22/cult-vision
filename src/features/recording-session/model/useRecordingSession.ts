@@ -24,6 +24,7 @@ type RecordingSessionParams = {
   activeUser: {
     userId: string;
     userName: string;
+    phoneNumber: string;
     sessionUserId: string;
   } | null;
   selectedExerciseId: SupportedExerciseId | null;
@@ -135,10 +136,52 @@ export function useRecordingSession(params: RecordingSessionParams) {
     }
 
     try {
+      const TARGET_W = 720;
+      const TARGET_H = 1280;
+
+      const videoTrack = stream.getVideoTracks()[0];
+      const trackSettings = videoTrack?.getSettings() ?? {};
+      const srcW = trackSettings.width || 1280;
+      const srcH = trackSettings.height || 720;
+
+      const targetAspect = TARGET_W / TARGET_H;
+      let sx: number, sy: number, sw: number, sh: number;
+      if (srcW / srcH > targetAspect) {
+        sh = srcH;
+        sw = srcH * targetAspect;
+        sx = (srcW - sw) / 2;
+        sy = 0;
+      } else {
+        sw = srcW;
+        sh = srcW / targetAspect;
+        sx = 0;
+        sy = (srcH - sh) / 2;
+      }
+
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = TARGET_W;
+      cropCanvas.height = TARGET_H;
+      const cropCtx = cropCanvas.getContext("2d")!;
+
+      const cropVideo = document.createElement("video");
+      cropVideo.srcObject = stream;
+      cropVideo.muted = true;
+      cropVideo.playsInline = true;
+      void cropVideo.play();
+
+      let cropRafId = 0;
+      const drawCropFrame = () => {
+        cropCtx.drawImage(cropVideo, sx, sy, sw, sh, 0, 0, TARGET_W, TARGET_H);
+        cropRafId = requestAnimationFrame(drawCropFrame);
+      };
+      drawCropFrame();
+
+      const croppedStream = cropCanvas.captureStream(30);
+
       const mimeType = getSupportedRecordingMimeType();
       const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
+        ? new MediaRecorder(croppedStream, { mimeType })
+        : new MediaRecorder(croppedStream);
       const chunks: BlobPart[] = [];
       const actualStartedAt = new Date().toISOString();
 
@@ -169,6 +212,10 @@ export function useRecordingSession(params: RecordingSessionParams) {
       analysisModeRef.current = "recording";
 
       recorder.onstop = async () => {
+        cancelAnimationFrame(cropRafId);
+        cropVideo.srcObject = null;
+        croppedStream.getTracks().forEach((t) => t.stop());
+
         const stopMeta = stopMetaRef.current;
         const stoppedAt = stopMeta.stoppedAt ?? new Date().toISOString();
         const shouldSave = stopMeta.mode === "save";
@@ -219,7 +266,8 @@ export function useRecordingSession(params: RecordingSessionParams) {
           await markRecordingUploadComplete({
             recordingId,
             stoppedAt,
-            durationSec: calculateDurationSec(actualStartedAt, stoppedAt)
+            durationSec: calculateDurationSec(actualStartedAt, stoppedAt),
+            liveRepCount: stopMeta.liveRepCount
           });
           params.dispatch({
             type: "MARK_RECORDING_UPLOADED",
@@ -263,7 +311,7 @@ export function useRecordingSession(params: RecordingSessionParams) {
     }
   };
 
-  const startRecording = async () => {
+  const startRecording = async (weightKg?: string) => {
     if (
       !params.activeUser ||
       isPreparingCamera ||
@@ -327,6 +375,8 @@ export function useRecordingSession(params: RecordingSessionParams) {
         zoneName: params.deviceSession.zoneName,
         userId: params.activeUser.userId,
         userName: params.activeUser.userName,
+        phoneNumber: params.activeUser.phoneNumber,
+        weightKg: weightKg || undefined,
         selectedExercise: params.selectedExerciseId,
         startedAt: plannedStartedAt
       });
@@ -392,10 +442,12 @@ export function useRecordingSession(params: RecordingSessionParams) {
       return;
     }
 
+    const liveRepCount = params.currentRecording.liveRepEvents?.length ?? 0;
     const stoppedAt = new Date().toISOString();
     stopMetaRef.current = {
       mode: "save",
-      stoppedAt
+      stoppedAt,
+      liveRepCount
     };
 
     if (activeCaptureRef.current.recorder.state !== "inactive") {

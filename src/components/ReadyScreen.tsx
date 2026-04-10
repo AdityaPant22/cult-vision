@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ExercisePicker } from "./ExercisePicker";
 import { AuthenticatedUserSession } from "../types";
 import { SupportedExerciseId } from "../types";
@@ -7,7 +8,7 @@ interface ReadyScreenProps {
   authenticatedUsers: AuthenticatedUserSession[];
   isBackendOnline: boolean;
   selectedExerciseId: SupportedExerciseId | null;
-  onStartRecording: () => void;
+  onStartRecording: (weightKg: string) => void;
   onSelectConnectedUser: (sessionUserId: string) => void;
   onSelectExercise: (exerciseId: SupportedExerciseId) => void;
   onAddNewUser: () => void;
@@ -25,6 +26,7 @@ export function ReadyScreen({
   onAddNewUser,
   onEndActiveUser
 }: ReadyScreenProps) {
+  const [weightKg, setWeightKg] = useState("");
   return (
     <section className="screen">
       <div className="recording-banner">
@@ -87,6 +89,28 @@ export function ReadyScreen({
         />
       </div>
 
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Weight lifted</h2>
+          </div>
+          <span>Optional</span>
+        </div>
+        <p className="subtle-copy">
+          Enter the weight {activeUser.userName} is lifting so we can personalize the feedback.
+        </p>
+        <div className="inline-form">
+          <input
+            inputMode="numeric"
+            type="text"
+            value={weightKg}
+            onChange={(e) => setWeightKg(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            placeholder="80"
+          />
+          <span className="input-suffix-chip">kg</span>
+        </div>
+      </div>
+
       {!isBackendOnline ? (
         <div className="backend-status-banner">
           <strong>Backend offline</strong>
@@ -98,7 +122,7 @@ export function ReadyScreen({
         <button
           className="primary-button tall-button"
           type="button"
-          onClick={onStartRecording}
+          onClick={() => onStartRecording(weightKg.trim())}
           disabled={!isBackendOnline || !selectedExerciseId}
         >
           {selectedExerciseId ? "Start Recording" : "Select Exercise First"}

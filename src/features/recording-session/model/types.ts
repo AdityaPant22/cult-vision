@@ -5,6 +5,7 @@ export type StopMode = "save" | "cancel";
 export type StopMeta = {
   mode: StopMode;
   stoppedAt: string | null;
+  liveRepCount?: number;
 };
 
 export type LiveAnalysisMode = "calibration" | "recording";

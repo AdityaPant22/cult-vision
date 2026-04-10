@@ -36,7 +36,7 @@ interface KioskPageProps {
   onSubmitPhone: (phone: string) => void;
   onSelectUser: (sessionUserId: string) => void;
   onAcceptTerms: () => void;
-  onStartRecording: () => void;
+  onStartRecording: (weightKg: string) => void;
   onStopRecording: () => void;
   onCancelRecording: () => void;
   onSelectExercise: (exerciseId: SupportedExerciseId) => void;
@@ -155,7 +155,7 @@ export function KioskPage({
         templateProcessingStates={templateProcessingStates}
         queuedTemplateIds={queuedTemplateIds}
         onStartTemplateRender={onStartTemplateRender}
-        onRecordNextSet={onStartRecording}
+        onRecordNextSet={() => onStartRecording("")}
         onEndActiveUser={onEndActiveUser}
         onAddNewUser={onAddNewUser}
         onSelectExercise={onSelectExercise}

@@ -1134,23 +1134,37 @@ def build_live_checks(
 class LiveTracker:
     def __init__(self, selected_exercise: str | None = None) -> None:
         self.history: deque[FrameMetrics] = deque(maxlen=120)
+        self.all_history: list[FrameMetrics] = []
         self.visibility_count = 0
         self.selected_exercise = normalize_selected_exercise(selected_exercise)
+        self.peak_rep_count = 0
 
     def append(self, metrics: FrameMetrics, visibility_count: int) -> None:
         self.history.append(metrics)
+        self.all_history.append(metrics)
         self.visibility_count = max(self.visibility_count, visibility_count)
 
     def summarize(self) -> ExerciseSummary:
-        return summarize_metrics(
+        summary = summarize_metrics(
             list(self.history),
             self.visibility_count,
             selected_exercise=self.selected_exercise,
         )
+        full_summary = summarize_metrics(
+            self.all_history,
+            self.visibility_count,
+            selected_exercise=self.selected_exercise,
+        )
+        self.peak_rep_count = max(self.peak_rep_count, full_summary.rep_count)
+        summary.rep_count = self.peak_rep_count
+        summary.rep_events = full_summary.rep_events
+        return summary
 
     def reset_recording_window(self) -> None:
         self.history.clear()
+        self.all_history.clear()
         self.visibility_count = 0
+        self.peak_rep_count = 0
 
 
 class LivePoseAnalyzerSession:

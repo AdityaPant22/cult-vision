@@ -12,6 +12,8 @@ class RecordingCreateRequest(BaseModel):
     zone_name: str
     user_id: str
     user_name: str
+    phone_number: str = ""
+    weight_kg: Optional[str] = None
     selected_exercise: Optional[str] = None
     started_at: Optional[datetime] = None
 
@@ -27,6 +29,7 @@ class RecordingCreateResponse(BaseModel):
 class UploadCompleteRequest(BaseModel):
     stopped_at: datetime
     duration_sec: int
+    live_rep_count: Optional[int] = None
 
 
 class LiveAnalysisMessage(BaseModel):
@@ -86,6 +89,8 @@ class RecordingListItem(BaseModel):
     status: str
     asset_url: Optional[str]
     mime_type: Optional[str]
+    cloud_sync_status: Optional[str] = None
+    weight_kg: Optional[str] = None
     latest_result: Optional[AnalysisResultPayload] = None
 
 

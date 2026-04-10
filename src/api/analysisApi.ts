@@ -46,6 +46,8 @@ export interface BackendRecordingItem {
   status: string;
   asset_url: string | null;
   mime_type: string | null;
+  cloud_sync_status: string | null;
+  weight_kg: string | null;
   latest_result: BackendAnalysisResultPayload | null;
 }
 
@@ -194,6 +196,8 @@ export async function createRecordingSession(payload: {
   zoneName: string;
   userId: string;
   userName: string;
+  phoneNumber: string;
+  weightKg?: string;
   selectedExercise: SupportedExerciseId;
   startedAt?: string;
 }): Promise<CreateRecordingSessionResponse> {
@@ -208,6 +212,8 @@ export async function createRecordingSession(payload: {
       zone_name: payload.zoneName,
       user_id: payload.userId,
       user_name: payload.userName,
+      phone_number: payload.phoneNumber,
+      weight_kg: payload.weightKg || null,
       selected_exercise: payload.selectedExercise,
       started_at: payload.startedAt
     })
@@ -232,6 +238,7 @@ export async function markRecordingUploadComplete(payload: {
   recordingId: string;
   stoppedAt: string;
   durationSec: number;
+  liveRepCount?: number;
 }): Promise<void> {
   await apiRequest(`/api/recordings/${payload.recordingId}/upload-complete`, {
     method: "POST",
@@ -240,8 +247,23 @@ export async function markRecordingUploadComplete(payload: {
     },
     body: JSON.stringify({
       stopped_at: payload.stoppedAt,
-      duration_sec: payload.durationSec
+      duration_sec: payload.durationSec,
+      live_rep_count: payload.liveRepCount ?? null
     })
+  });
+}
+
+export async function uploadRenderedVideo(
+  recordingId: string,
+  blob: Blob,
+  filename: string
+): Promise<void> {
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+
+  await apiRequest(`/api/recordings/${recordingId}/rendered-video`, {
+    method: "POST",
+    body: formData
   });
 }
 

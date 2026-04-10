@@ -23,6 +23,7 @@ export interface AuthenticatedUserSession {
   sessionUserId: string;
   userId: string;
   userName: string;
+  phoneNumber: string;
   joinedAt: string;
   isActive: boolean;
 }

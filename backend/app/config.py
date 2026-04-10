@@ -52,6 +52,9 @@ class Settings:
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_key: str = os.getenv("SUPABASE_KEY", "")
 
+    # OpenRouter AI
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
+
 
 settings = Settings()
 

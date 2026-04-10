@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { deleteBackendRecording } from "./api/analysisApi";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { deleteBackendRecording, uploadRenderedVideo } from "./api/analysisApi";
 import { useAppRoute } from "./app/router/useAppRoute";
 import { AuthModal } from "./components/AuthModal";
 import { DebugPanel } from "./components/DebugPanel";
@@ -67,6 +67,7 @@ export default function App() {
   const {
     backendStatus,
     serverRecordings,
+    syncToasts,
     refreshRecordingsFromServer,
     verifyBackendConnection
   } = useBackendRecordings({
@@ -189,6 +190,63 @@ export default function App() {
     [pendingTemplateRender]
   );
 
+  const autoRenderTriggeredRef = useRef<Set<string>>(new Set());
+  const autoUploadTriggeredRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!latestRecordingLibraryItem) return;
+    const recId = latestRecordingLibraryItem.id;
+
+    const serverRec = serverRecordings.find((r) => r.id === recId);
+    const isReady = serverRec?.status === "ready";
+    const isAwaitingRender = serverRec?.cloud_sync_status === "awaiting_render";
+
+    if (!isReady || !isAwaitingRender) return;
+    if (autoRenderTriggeredRef.current.has(recId)) return;
+    if (!latestRecordingLibraryItem.playbackUrl) return;
+
+    autoRenderTriggeredRef.current.add(recId);
+
+    const weightKg = serverRec.weight_kg ?? undefined;
+    startTemplateRender(recordingLibraryItems, recId, "primary" as VideoTemplateId, {
+      weightKg
+    });
+  }, [
+    latestRecordingLibraryItem,
+    serverRecordings,
+    recordingLibraryItems,
+    startTemplateRender
+  ]);
+
+  const handleRenderedVideoUpload = useCallback(
+    async (recordingId: string, blob: Blob) => {
+      try {
+        const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+        await uploadRenderedVideo(recordingId, blob, `${recordingId}-rendered.${ext}`);
+        await refreshRecordingsFromServer(true);
+      } catch (err) {
+        console.error("Failed to upload rendered video:", err);
+      }
+    },
+    [refreshRecordingsFromServer]
+  );
+
+  useEffect(() => {
+    if (!latestRecordingLibraryItem) return;
+    const recId = latestRecordingLibraryItem.id;
+    if (autoUploadTriggeredRef.current.has(recId)) return;
+
+    const primaryAsset = editedRecordingAssets[recId]?.["primary"];
+    if (!primaryAsset) return;
+
+    autoUploadTriggeredRef.current.add(recId);
+
+    fetch(primaryAsset.url)
+      .then((res) => res.blob())
+      .then((blob) => handleRenderedVideoUpload(recId, blob))
+      .catch((err) => console.error("Failed to fetch rendered blob:", err));
+  }, [latestRecordingLibraryItem, editedRecordingAssets, handleRenderedVideoUpload]);
+
   const shouldShowRecordingScreen =
     route === "kiosk" &&
     !!activeUser &&
@@ -254,11 +312,11 @@ export default function App() {
     });
 
     if (resolution.type === "existing-user") {
-      dispatch({ type: "AUTHENTICATE_USER", payload: { user: resolution.user } });
+      dispatch({ type: "AUTHENTICATE_USER", payload: { user: resolution.user, phone } });
     } else {
       dispatch({
         type: "CREATE_AND_AUTHENTICATE_USER",
-        payload: { name: resolution.name }
+        payload: { name: resolution.name, phone }
       });
     }
 
@@ -307,6 +365,11 @@ export default function App() {
     isRetry = false
   ) => {
     if (templateNeedsWeightInput(templateId)) {
+      const serverRec = serverRecordings.find((r) => r.id === recordingId);
+      if (serverRec?.weight_kg) {
+        queueTemplateRender(recordingId, templateId, isRetry, serverRec.weight_kg);
+        return;
+      }
       setPendingTemplateRender({ recordingId, templateId, isRetry });
       return;
     }
@@ -494,6 +557,16 @@ export default function App() {
         onClose={() => setIsDebugOpen(false)}
         onResetDevice={handleResetDevice}
       />
+
+      {syncToasts.length > 0 && (
+        <div className="sync-toast-container">
+          {syncToasts.map((toast) => (
+            <div key={toast.id} className={`sync-toast sync-toast--${toast.type}`}>
+              {toast.type === "success" ? "✓" : "ℹ"} {toast.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
