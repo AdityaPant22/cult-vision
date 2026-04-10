@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Annotated, List, Optional
 
 import cv2
-import requests as http_requests
 import time
 
 import numpy as np
@@ -171,6 +170,14 @@ Return ONLY the JSON object, no markdown fences, no extra text."""
 
 
 def upload_to_cloudinary(file_bytes: bytes, filename: str) -> str:
+    try:
+        import requests as http_requests
+    except ModuleNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudinary upload requires the optional 'requests' package.",
+        ) from error
+
     url = f"https://api.cloudinary.com/v1_1/{settings.cloudinary_cloud_name}/video/upload"
     resp = http_requests.post(
         url,

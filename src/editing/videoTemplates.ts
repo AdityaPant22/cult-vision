@@ -559,7 +559,7 @@ function drawBaseVideoFrame(params: {
   });
 
   context.clearRect(0, 0, canvasWidth, canvasHeight);
-  context.filter = "contrast(1.18) saturate(1.18) brightness(1.05)";
+  context.filter = "contrast(1.2) saturate(1.02) brightness(1.03)";
   context.drawImage(
     video,
     crop.cropX,
@@ -572,8 +572,9 @@ function drawBaseVideoFrame(params: {
     canvasHeight
   );
 
-  context.globalAlpha = 0.14;
-  context.filter = "contrast(1.32) saturate(1.08)";
+  // A light detail pass gives the subject a slightly crisper look without changing the crop.
+  context.globalAlpha = 0.1;
+  context.filter = "contrast(1.42) saturate(1.01) brightness(1.01)";
   context.drawImage(
     video,
     crop.cropX,
@@ -601,12 +602,6 @@ function drawBaseVideoFrame(params: {
   vignette.addColorStop(1, "rgba(7, 9, 10, 0.38)");
   context.fillStyle = vignette;
   context.fillRect(0, 0, canvasWidth, canvasHeight);
-
-  const topGlow = context.createLinearGradient(0, 0, canvasWidth, canvasHeight * 0.4);
-  topGlow.addColorStop(0, "rgba(210, 255, 114, 0.12)");
-  topGlow.addColorStop(1, "rgba(210, 255, 114, 0)");
-  context.fillStyle = topGlow;
-  context.fillRect(0, 0, canvasWidth, canvasHeight * 0.45);
 
   return crop;
 }
@@ -798,12 +793,14 @@ function drawPrimaryRepCounter(params: {
   pulseStrength: number;
 }) {
   const { context, canvasWidth, completedRepCount, pulseStrength } = params;
-  const x = canvasWidth - 144;
+  const width = 126;
+  const height = 58;
+  const x = canvasWidth - width - 18;
   const y = 18;
-  const width = 124;
-  const height = 42;
   const emojiScale = 1 + pulseStrength * 0.28;
-  const repText = `${completedRepCount} reps`;
+  const countText = String(completedRepCount);
+  const leftColumnCenterX = x + 32;
+  const rightColumnCenterX = x + 88;
 
   drawRoundedRect(context, x, y, width, height, 20);
   context.fillStyle = "rgba(12, 15, 19, 0.82)";
@@ -817,36 +814,34 @@ function drawPrimaryRepCounter(params: {
     context.globalAlpha = 0.18 + pulseStrength * 0.18;
     context.fillStyle = "#ff8a3d";
     context.beginPath();
-    context.arc(x + width * 0.66, y + 21, 13 + pulseStrength * 10, 0, Math.PI * 2);
+    context.arc(rightColumnCenterX, y + 18, 13 + pulseStrength * 10, 0, Math.PI * 2);
     context.fill();
     context.restore();
   }
 
-  const repFont = "700 14px 'Avenir Next', 'Segoe UI', sans-serif";
-  const emojiFont = "700 14px 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
-  const emojiGap = 6;
+  const countFont = "800 32px 'Avenir Next', 'Segoe UI', sans-serif";
+  const labelFont = "700 13px 'Avenir Next', 'Segoe UI', sans-serif";
+  const emojiFont = "700 18px 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif";
+  const numberBaselineY = y + 39;
+  const labelBaselineY = y + 43;
 
   context.fillStyle = "#f4f4ef";
-  context.font = repFont;
-  const repTextWidth = context.measureText(repText).width;
-  context.font = emojiFont;
-  const emojiWidth = context.measureText("🔥").width;
-  const totalContentWidth = repTextWidth + emojiGap + emojiWidth;
-  const contentStartX = x + width / 2 - totalContentWidth / 2;
-  const baselineY = y + 26;
-
-  context.font = repFont;
-  context.textAlign = "left";
-  context.fillText(repText, contentStartX, baselineY);
+  context.font = countFont;
+  context.textAlign = "center";
+  context.fillText(countText, leftColumnCenterX, numberBaselineY);
 
   context.save();
-  context.translate(contentStartX + repTextWidth + emojiGap + emojiWidth / 2, y + 24);
+  context.translate(rightColumnCenterX, y + 18);
   context.scale(emojiScale, emojiScale);
   context.font = emojiFont;
   context.textAlign = "center";
   context.fillText("🔥", 0, 0);
   context.restore();
 
+  context.textAlign = "center";
+  context.fillStyle = "rgba(244, 244, 239, 0.78)";
+  context.font = labelFont;
+  context.fillText("reps", rightColumnCenterX, labelBaselineY);
   context.textAlign = "left";
 }
 
@@ -1258,18 +1253,6 @@ function drawFrameForTemplate(params: {
   }
 
   if (isPrimaryTemplateId(params.templateId)) {
-    const cleanWash = params.context.createLinearGradient(0, 0, 0, params.canvasHeight);
-    cleanWash.addColorStop(0, "rgba(210, 255, 114, 0.08)");
-    cleanWash.addColorStop(0.52, "rgba(8, 10, 12, 0.08)");
-    cleanWash.addColorStop(1, "rgba(5, 8, 11, 0.28)");
-    params.context.fillStyle = cleanWash;
-    params.context.fillRect(0, 0, params.canvasWidth, params.canvasHeight);
-    drawSoftBorder({
-      context: params.context,
-      canvasWidth: params.canvasWidth,
-      canvasHeight: params.canvasHeight,
-      strokeStyle: "rgba(210, 255, 114, 0.18)"
-    });
     drawPrimaryOverlay({
       context: params.context,
       canvasWidth: params.canvasWidth,
