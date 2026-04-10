@@ -266,7 +266,8 @@ export function useRecordingSession(params: RecordingSessionParams) {
           await markRecordingUploadComplete({
             recordingId,
             stoppedAt,
-            durationSec: calculateDurationSec(actualStartedAt, stoppedAt)
+            durationSec: calculateDurationSec(actualStartedAt, stoppedAt),
+            liveRepCount: stopMeta.liveRepCount
           });
           params.dispatch({
             type: "MARK_RECORDING_UPLOADED",
@@ -310,7 +311,7 @@ export function useRecordingSession(params: RecordingSessionParams) {
     }
   };
 
-  const startRecording = async () => {
+  const startRecording = async (weightKg?: string) => {
     if (
       !params.activeUser ||
       isPreparingCamera ||
@@ -375,6 +376,7 @@ export function useRecordingSession(params: RecordingSessionParams) {
         userId: params.activeUser.userId,
         userName: params.activeUser.userName,
         phoneNumber: params.activeUser.phoneNumber,
+        weightKg: weightKg || undefined,
         selectedExercise: params.selectedExerciseId,
         startedAt: plannedStartedAt
       });
@@ -440,10 +442,12 @@ export function useRecordingSession(params: RecordingSessionParams) {
       return;
     }
 
+    const liveRepCount = params.currentRecording.liveRepEvents?.length ?? 0;
     const stoppedAt = new Date().toISOString();
     stopMetaRef.current = {
       mode: "save",
-      stoppedAt
+      stoppedAt,
+      liveRepCount
     };
 
     if (activeCaptureRef.current.recorder.state !== "inactive") {

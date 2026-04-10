@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated, List, Optional
 
 import cv2
+import requests as http_requests
 import time
 
 import numpy as np
@@ -62,9 +63,21 @@ def ensure_schema() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE recordings ADD COLUMN phone_number VARCHAR"
             )
+        if "weight_kg" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE recordings ADD COLUMN weight_kg VARCHAR"
+            )
         if "cloud_sync_status" not in columns:
             connection.exec_driver_sql(
                 "ALTER TABLE recordings ADD COLUMN cloud_sync_status VARCHAR"
+            )
+        if "ai_feedback_json" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE recordings ADD COLUMN ai_feedback_json TEXT"
+            )
+        if "live_rep_count" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE recordings ADD COLUMN live_rep_count INTEGER"
             )
 
 
@@ -94,10 +107,12 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.0-flash-001"
 
 
-def generate_ai_feedback(summary: ExerciseSummary) -> dict:
+def generate_ai_feedback(summary: ExerciseSummary, weight_kg: str | None = None) -> dict:
     """Call OpenRouter to get structured, motivating feedback categories."""
     if not settings.openrouter_api_key:
         return {}
+
+    weight_line = f"- Weight lifted: {weight_kg} kg" if weight_kg else "- Weight lifted: not provided"
 
     prompt = f"""You are a supportive and motivating fitness coach. Based on the workout analysis below,
 generate feedback in exactly 4 categories: Depth, Stability, Tempo, and Strain.
@@ -117,6 +132,7 @@ Example output format:
 Workout Analysis:
 - Exercise: {summary.exercise}
 - Reps completed: {summary.rep_count}
+{weight_line}
 - Overall score: {summary.overall_score}/100
 - Range of motion: {summary.metrics.get('range_of_motion', 0)}/100
 - Stability: {summary.metrics.get('stability', 0)}/100
@@ -155,14 +171,6 @@ Return ONLY the JSON object, no markdown fences, no extra text."""
 
 
 def upload_to_cloudinary(file_bytes: bytes, filename: str) -> str:
-    try:
-        import requests as http_requests
-    except ModuleNotFoundError as error:
-        raise HTTPException(
-            status_code=500,
-            detail="Cloudinary upload requires the 'requests' package in the backend environment.",
-        ) from error
-
     url = f"https://api.cloudinary.com/v1_1/{settings.cloudinary_cloud_name}/video/upload"
     resp = http_requests.post(
         url,
@@ -249,6 +257,7 @@ def create_recording(
         user_id=payload.user_id,
         user_name=payload.user_name,
         phone_number=payload.phone_number or None,
+        weight_kg=payload.weight_kg or None,
         selected_exercise=payload.selected_exercise,
         started_at=started_at,
         live_analysis_token=live_analysis_token,
@@ -319,6 +328,21 @@ def run_recording_analysis_job(recording_id: str) -> None:
         summary = analyze_video_file(
             asset_path, selected_exercise=recording.selected_exercise
         )
+
+        authoritative_rep_count = max(
+            summary.rep_count,
+            recording.live_rep_count or 0,
+        )
+        if authoritative_rep_count != summary.rep_count:
+            logger.info(
+                "Rep count corrected for %s: video_analysis=%d, live=%s → using %d",
+                recording_id,
+                summary.rep_count,
+                recording.live_rep_count,
+                authoritative_rep_count,
+            )
+            summary.rep_count = authoritative_rep_count
+
         job.status = "completed"
         job.progress = 1.0
         job.message = "Analysis complete"
@@ -335,7 +359,7 @@ def run_recording_analysis_job(recording_id: str) -> None:
             recording_id=recording.id,
             exercise=summary.exercise,
             confidence=summary.confidence,
-            rep_count=summary.rep_count,
+            rep_count=authoritative_rep_count,
             overall_score=summary.overall_score,
             range_of_motion_score=summary.metrics["range_of_motion"],
             stability_score=summary.metrics["stability"],
@@ -360,52 +384,20 @@ def run_recording_analysis_job(recording_id: str) -> None:
             )
 
         recording.status = "ready"
-        recording.cloud_sync_status = "uploading_video"
-        db.commit()
 
         try:
-            ai_feedback = generate_ai_feedback(summary)
+            ai_feedback = generate_ai_feedback(summary, recording.weight_kg)
+            recording.ai_feedback_json = ai_feedback if ai_feedback else {}
+        except Exception as ai_err:
+            logger.warning("AI feedback generation failed for %s: %s", recording_id, ai_err)
+            recording.ai_feedback_json = {}
 
-            video_bytes = asset_path.read_bytes()
-            cdn_url = upload_to_cloudinary(
-                video_bytes, f"{recording_id}{asset_path.suffix}"
-            )
-
-            recording.cloud_sync_status = "video_uploaded"
-            db.commit()
-
-            if supabase_client:
-                recording.cloud_sync_status = "saving_data"
-                db.commit()
-
-                meta = {
-                    "dateTime": int(time.time() * 1000),
-                    "exercise": summary.exercise,
-                    "reps": summary.rep_count,
-                    "form_score": round(summary.overall_score / 100, 2),
-                    "feedback": ai_feedback if ai_feedback else {},
-                }
-
-                supabase_client.table("userVedios").insert({
-                    "cdn_url": cdn_url,
-                    "phone_number": recording.phone_number or recording.user_id,
-                    "meta": meta,
-                }).execute()
-
-                recording.cloud_sync_status = "synced"
-                db.commit()
-
-                logger.info(
-                    "Recording %s synced to Cloudinary + Supabase", recording_id
-                )
-        except Exception as sync_error:
-            recording.cloud_sync_status = "failed"
-            db.commit()
-            logger.warning(
-                "Cloudinary/Supabase sync failed for %s (SQLite data is safe): %s",
-                recording_id,
-                sync_error,
-            )
+        recording.cloud_sync_status = "awaiting_render"
+        db.commit()
+        logger.info(
+            "Recording %s analysis complete, awaiting rendered video for Cloudinary sync",
+            recording_id,
+        )
 
     except Exception as error:
         job = (
@@ -437,12 +429,91 @@ async def mark_upload_complete(
 
     recording.stopped_at = payload.stopped_at
     recording.duration_sec = payload.duration_sec
+    recording.live_rep_count = payload.live_rep_count
     recording.status = "processing"
     recording.upload_status = "complete"
     db.commit()
 
     background_tasks.add_task(run_recording_analysis_job, recording_id)
     return {"queued": True}
+
+
+def _sync_rendered_video_to_cloud(recording_id: str, video_bytes: bytes, filename: str) -> None:
+    """Background task: upload rendered video to Cloudinary + save metadata to Supabase."""
+    db = open_db_session()
+    try:
+        recording = db.get(Recording, recording_id)
+        if not recording:
+            return
+
+        recording.cloud_sync_status = "uploading_video"
+        db.commit()
+
+        cdn_url = upload_to_cloudinary(video_bytes, filename)
+
+        recording.cloud_sync_status = "video_uploaded"
+        db.commit()
+
+        if supabase_client:
+            recording.cloud_sync_status = "saving_data"
+            db.commit()
+
+            ai_feedback = recording.ai_feedback_json or {}
+            result = recording.latest_result
+
+            meta = {
+                "dateTime": int(time.time() * 1000),
+                "exercise": result.exercise if result else recording.selected_exercise or "unknown",
+                "reps": result.rep_count if result else 0,
+                "weight_kg": recording.weight_kg or None,
+                "form_score": round(result.overall_score / 100, 2) if result else 0,
+                "feedback": ai_feedback,
+            }
+
+            supabase_client.table("userVedios").insert({
+                "cdn_url": cdn_url,
+                "phone_number": recording.phone_number or recording.user_id,
+                "meta": meta,
+            }).execute()
+
+            recording.cloud_sync_status = "synced"
+            db.commit()
+            logger.info("Rendered video for %s synced to Cloudinary + Supabase", recording_id)
+
+    except Exception as exc:
+        try:
+            recording = db.get(Recording, recording_id)
+            if recording:
+                recording.cloud_sync_status = "failed"
+                db.commit()
+        except Exception:
+            pass
+        logger.warning("Rendered video sync failed for %s: %s", recording_id, exc)
+    finally:
+        db.close()
+
+
+@app.post(f"{settings.api_prefix}/recordings/{{recording_id}}/rendered-video")
+async def upload_rendered_video(
+    recording_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    recording = db.get(Recording, recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    video_bytes = await file.read()
+    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "webm"
+    filename = f"{recording_id}-rendered.{ext}"
+
+    rendered_asset = storage.save_bytes(filename, video_bytes, file.content_type)
+    recording.cloud_sync_status = "uploading_video"
+    db.commit()
+
+    background_tasks.add_task(_sync_rendered_video_to_cloud, recording_id, video_bytes, filename)
+    return {"queued": True, "rendered_storage_key": rendered_asset.storage_key}
 
 
 @app.get(f"{settings.api_prefix}/recordings", response_model=list[RecordingListItem])
@@ -461,6 +532,7 @@ def list_recordings(db: Session = Depends(get_db)):
             asset_url=item.asset_url,
             mime_type=item.mime_type,
             cloud_sync_status=item.cloud_sync_status,
+            weight_kg=item.weight_kg,
             latest_result=analysis_payload_from_model(item.latest_result),
         )
         for item in recordings

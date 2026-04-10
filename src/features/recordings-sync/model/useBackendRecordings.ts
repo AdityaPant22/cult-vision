@@ -8,7 +8,7 @@ import {
 import { AppRoute } from "../../../app/router/useAppRoute";
 
 const SERVER_SYNC_STATUSES = new Set(["recording", "processing", "uploading"]);
-const CLOUD_SYNCING_STATUSES = new Set(["uploading_video", "saving_data", "video_uploaded"]);
+const CLOUD_SYNCING_STATUSES = new Set(["awaiting_render", "uploading_video", "saving_data", "video_uploaded"]);
 
 let toastCounter = 0;
 
