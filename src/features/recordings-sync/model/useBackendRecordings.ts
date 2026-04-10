@@ -58,8 +58,13 @@ export function useBackendRecordings(params: {
 
       const prevMap = prevSyncStatusRef.current;
       for (const rec of recordings) {
+        const hadPriorPoll = prevMap.has(rec.id);
         const prev = prevMap.get(rec.id) ?? null;
-        if (prev !== rec.cloud_sync_status && rec.cloud_sync_status) {
+        if (
+          hadPriorPoll &&
+          prev !== rec.cloud_sync_status &&
+          rec.cloud_sync_status
+        ) {
           if (rec.cloud_sync_status === "video_uploaded") {
             showToast("Video saved to cloud");
           } else if (rec.cloud_sync_status === "synced") {
